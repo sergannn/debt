@@ -193,8 +193,15 @@ class _DebtHomePageState extends State<DebtHomePage> {
   Future<void> _openLoan(Loan loan) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) =>
-            LoanDetailsPage(loan: loan, onCloseEarly: _closeLoanEarly),
+        builder: (_) => LoanDetailsPage(
+          loan: loan,
+          onEditLoan: _editLoan,
+          onAddPayment: _addPayment,
+          onAddLoanForDebtor: _addLoanForDebtor,
+          onArchiveLoan: _archiveLoan,
+          onDeleteLoan: _deleteLoan,
+          onCloseEarly: _closeLoanEarly,
+        ),
       ),
     );
     setState(() {});
@@ -213,6 +220,88 @@ class _DebtHomePageState extends State<DebtHomePage> {
     final stored = await _repository.createLoan(loan);
     setState(() => _loans.insert(0, stored));
     await _save();
+  }
+
+  Future<void> _addLoanForDebtor(Loan source) async {
+    final loan = await showDialog<Loan>(
+      context: context,
+      builder: (_) => CreateLoanDialog(
+        tariffs: _tariffs,
+        debtors: knownDebtors(_loans),
+        recentDebtors: recentDebtors(_loans),
+        initialDebtorName: source.debtorName,
+      ),
+    );
+    if (loan == null) return;
+    final stored = await _repository.createLoan(loan);
+    setState(() => _loans.insert(0, stored));
+    await _save();
+  }
+
+  Future<Loan?> _editLoan(Loan loan) async {
+    final updated = await showDialog<Loan>(
+      context: context,
+      builder: (_) => EditLoanDialog(loan: loan),
+    );
+    if (updated == null) return null;
+    final index = _loans.indexWhere((item) => item.id == loan.id);
+    if (index == -1) return null;
+    setState(() => _loans[index] = updated);
+    await _save();
+    return updated;
+  }
+
+  Future<Loan?> _addPayment(Loan loan) async {
+    final payment = await showDialog<LoanPaymentDraft>(
+      context: context,
+      builder: (_) => AddPaymentDialog(loan: loan),
+    );
+    if (payment == null) return null;
+    final index = _loans.indexWhere((item) => item.id == loan.id);
+    if (index == -1) return null;
+    final updated = loan.copyWith(
+      paidAmount: loan.paidAmount + payment.amount,
+      note: payment.note.isEmpty ? loan.note : payment.note,
+    );
+    setState(() => _loans[index] = updated);
+    await _save();
+    return updated;
+  }
+
+  Future<Loan?> _archiveLoan(Loan loan) async {
+    final index = _loans.indexWhere((item) => item.id == loan.id);
+    if (index == -1) return null;
+    final updated = loan.copyWith(archivedAt: DateTime.now());
+    setState(() => _loans[index] = updated);
+    await _save();
+    return updated;
+  }
+
+  Future<bool> _deleteLoan(Loan loan) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Удалить долг?'),
+        content: Text(
+          '${loan.debtorName}: ${money(loan.remainingDue)}. '
+          'Запись исчезнет из списка.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
+    setState(() => _loans.removeWhere((item) => item.id == loan.id));
+    await _save();
+    return true;
   }
 
   Future<void> _addRequest() async {
@@ -243,13 +332,13 @@ class _DebtHomePageState extends State<DebtHomePage> {
     await _save();
   }
 
-  Future<void> _closeLoanEarly(Loan loan) async {
+  Future<Loan?> _closeLoanEarly(Loan loan) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Закрыть долг досрочно?'),
         content: Text(
-          '${loan.debtorName} должен внести ${money(loan.expectedDue)}. '
+          '${loan.debtorName} должен внести ${money(loan.remainingDue)}. '
           'После закрытия начисления остановятся.',
         ),
         actions: [
@@ -264,17 +353,20 @@ class _DebtHomePageState extends State<DebtHomePage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) return null;
     final closedLoan = await _repository.closeLoan(loan);
     final index = _loans.indexWhere((item) => item.id == loan.id);
+    var stored = closedLoan;
     setState(() {
       if (index == -1) {
         loan.closedAt = dateOnly(DateTime.now());
+        stored = loan;
       } else {
         _loans[index] = closedLoan;
       }
     });
     await _save();
+    return stored;
   }
 
   Future<void> _approveRequest(LoanRequest request) async {
@@ -677,7 +769,9 @@ class LoansView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = loans.where((item) => item.isActive).toList();
-    final closed = loans.where((item) => !item.isActive).toList();
+    final closed = loans
+        .where((item) => !item.isActive && item.archivedAt == null)
+        .toList();
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
@@ -820,7 +914,7 @@ class _CalendarViewState extends State<CalendarView> {
           sum +
           active
               .where((loan) => loan.isDueOn(day))
-              .fold<double>(0, (daily, loan) => daily + loan.expectedDue),
+              .fold<double>(0, (daily, loan) => daily + loan.remainingDue),
     );
     final monthDue =
         active
@@ -972,6 +1066,7 @@ class PortfolioCalendarGrid extends StatelessWidget {
 
         return InkWell(
           onTap: () => showModalBottomSheet<void>(
+            useSafeArea: true,
             context: context,
             isScrollControlled: true,
             builder: (_) => DayReturnsSheet(
@@ -1057,8 +1152,11 @@ class DayReturnsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sorted = [...loans]
-      ..sort((a, b) => b.expectedDue.compareTo(a.expectedDue));
-    final total = sorted.fold<double>(0, (sum, loan) => sum + loan.expectedDue);
+      ..sort((a, b) => b.remainingDue.compareTo(a.remainingDue));
+    final total = sorted.fold<double>(
+      0,
+      (sum, loan) => sum + loan.remainingDue,
+    );
 
     return SafeArea(
       child: Padding(
@@ -1121,7 +1219,7 @@ class DayReturnsSheet extends StatelessWidget {
                               spacing: 4,
                               children: [
                                 Text(
-                                  money(loan.expectedDue),
+                                  money(loan.remainingDue),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w800,
                                     color: Color(0xFF123D34),
@@ -1250,12 +1348,22 @@ class TariffsView extends StatelessWidget {
 class LoanDetailsPage extends StatefulWidget {
   const LoanDetailsPage({
     required this.loan,
+    required this.onEditLoan,
+    required this.onAddPayment,
+    required this.onAddLoanForDebtor,
+    required this.onArchiveLoan,
+    required this.onDeleteLoan,
     required this.onCloseEarly,
     super.key,
   });
 
   final Loan loan;
-  final Future<void> Function(Loan) onCloseEarly;
+  final Future<Loan?> Function(Loan) onEditLoan;
+  final Future<Loan?> Function(Loan) onAddPayment;
+  final Future<void> Function(Loan) onAddLoanForDebtor;
+  final Future<Loan?> Function(Loan) onArchiveLoan;
+  final Future<bool> Function(Loan) onDeleteLoan;
+  final Future<Loan?> Function(Loan) onCloseEarly;
 
   @override
   State<LoanDetailsPage> createState() => _LoanDetailsPageState();
@@ -1263,17 +1371,19 @@ class LoanDetailsPage extends StatefulWidget {
 
 class _LoanDetailsPageState extends State<LoanDetailsPage> {
   late DateTime _shownMonth;
+  late Loan _loan;
 
   @override
   void initState() {
     super.initState();
+    _loan = widget.loan;
     final now = DateTime.now();
     _shownMonth = DateTime(now.year, now.month);
   }
 
   @override
   Widget build(BuildContext context) {
-    final loan = widget.loan;
+    final loan = _loan;
     final wide = MediaQuery.sizeOf(context).width >= 840;
     final calendar = LoanCalendar(
       loan: loan,
@@ -1300,18 +1410,62 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
               eyebrow: loan.isActive ? 'АКТИВНЫЙ ДОЛГ' : 'ДОЛГ ЗАКРЫТ',
               title: loan.debtorName,
               subtitle: loan.note.isEmpty ? loan.conditionLabel : loan.note,
-              action: loan.isActive
-                  ? FilledButton.icon(
-                      onPressed: () async {
-                        await widget.onCloseEarly(loan);
-                        if (mounted) setState(() {});
-                      },
-                      icon: const Icon(Icons.check_circle_outline),
-                      label: const Text('Закрыть досрочно'),
-                    )
-                  : null,
+              action: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: () async {
+                      final updated = await widget.onEditLoan(_loan);
+                      if (updated != null && mounted) {
+                        setState(() => _loan = updated);
+                      }
+                    },
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Редактировать'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => widget.onAddLoanForDebtor(_loan),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Еще займ'),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 22),
+            LoanActionsPanel(
+              loan: loan,
+              onAddPayment: () async {
+                final updated = await widget.onAddPayment(_loan);
+                if (updated != null && mounted) {
+                  setState(() => _loan = updated);
+                }
+              },
+              onClose: loan.isActive
+                  ? () async {
+                      final updated = await widget.onCloseEarly(_loan);
+                      if (updated != null && mounted) {
+                        setState(() => _loan = updated);
+                      }
+                    }
+                  : null,
+              onArchive: !loan.isActive && loan.archivedAt == null
+                  ? () async {
+                      final navigator = Navigator.of(context);
+                      final updated = await widget.onArchiveLoan(_loan);
+                      if (updated != null && mounted) {
+                        setState(() => _loan = updated);
+                        navigator.pop();
+                      }
+                    }
+                  : null,
+              onDelete: () async {
+                final navigator = Navigator.of(context);
+                final deleted = await widget.onDeleteLoan(_loan);
+                if (deleted && mounted) navigator.pop();
+              },
+            ),
+            const SizedBox(height: 16),
             if (wide)
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1438,6 +1592,58 @@ class MetricCard extends StatelessWidget {
   }
 }
 
+class LoanActionsPanel extends StatelessWidget {
+  const LoanActionsPanel({
+    required this.loan,
+    required this.onAddPayment,
+    required this.onDelete,
+    this.onClose,
+    this.onArchive,
+    super.key,
+  });
+
+  final Loan loan;
+  final VoidCallback onAddPayment;
+  final VoidCallback? onClose;
+  final VoidCallback? onArchive;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: loan.isActive ? onAddPayment : null,
+              icon: const Icon(Icons.payments_outlined),
+              label: const Text('Частичная оплата'),
+            ),
+            OutlinedButton.icon(
+              onPressed: onClose,
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Закрыть'),
+            ),
+            OutlinedButton.icon(
+              onPressed: onArchive,
+              icon: const Icon(Icons.archive_outlined),
+              label: const Text('В архив'),
+            ),
+            TextButton.icon(
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('Удалить'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class LoanTile extends StatelessWidget {
   const LoanTile({required this.loan, required this.onTap, super.key});
 
@@ -1499,7 +1705,7 @@ class LoanTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    money(loan.expectedDue),
+                    money(loan.remainingDue),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -1509,7 +1715,9 @@ class LoanTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    loan.isActive ? '${loan.accruedDays} дней' : 'закрыт',
+                    loan.isActive
+                        ? '${daysBetweenInclusive(loan.issuedAt, loan.dueAt)} дн.'
+                        : 'закрыт',
                     style: TextStyle(
                       color: loan.isActive
                           ? const Color(0xFF9A5B2C)
@@ -1646,8 +1854,14 @@ class LoanSummaryPanel extends StatelessWidget {
             _SummaryRow(label: 'Доход', value: money(loan.interest)),
             const Divider(height: 24),
             _SummaryRow(
-              label: 'К возврату',
+              label: 'К возврату всего',
               value: money(loan.expectedDue),
+            ),
+            if (loan.paidAmount > 0)
+              _SummaryRow(label: 'Уже внесено', value: money(loan.paidAmount)),
+            _SummaryRow(
+              label: 'Осталось',
+              value: money(loan.remainingDue),
               strong: true,
             ),
             const SizedBox(height: 14),
@@ -1803,7 +2017,7 @@ class LoanCalendar extends StatelessWidget {
                       ),
                       if (due)
                         Text(
-                          money(loan.expectedDue, decimals: 0),
+                          money(loan.remainingDue, decimals: 0),
                           style: const TextStyle(
                             color: Color(0xFF123D34),
                             fontSize: 8,
@@ -1865,7 +2079,7 @@ class DailyAccrualList extends StatelessWidget {
           title: Text('Ожидается ${longDate(loan.dueAt)}'),
           subtitle: Text('Доход: ${money(loan.interest)}'),
           trailing: Text(
-            money(loan.expectedDue),
+            money(loan.remainingDue),
             style: const TextStyle(
               color: Color(0xFF123D34),
               fontWeight: FontWeight.w800,
@@ -1919,12 +2133,14 @@ class CreateLoanDialog extends StatefulWidget {
     required this.tariffs,
     required this.debtors,
     required this.recentDebtors,
+    this.initialDebtorName,
     super.key,
   });
 
   final List<DebtTariff> tariffs;
   final List<String> debtors;
   final List<String> recentDebtors;
+  final String? initialDebtorName;
 
   @override
   State<CreateLoanDialog> createState() => _CreateLoanDialogState();
@@ -2037,13 +2253,19 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
   final _amount = TextEditingController();
   final _repaymentAmount = TextEditingController();
   late final TextEditingController _percent;
-  final _days = TextEditingController(text: '30');
   final _note = TextEditingController();
   bool _fixedRepayment = false;
+  late DateTime _issuedAt;
+  late DateTime _dueAt;
 
   @override
   void initState() {
     super.initState();
+    _issuedAt = dateOnly(DateTime.now());
+    _dueAt = addMonths(_issuedAt, 1);
+    if (widget.initialDebtorName != null) {
+      _name.text = widget.initialDebtorName!;
+    }
     DebtTariff? defaultTariff;
     for (final tariff in widget.tariffs) {
       if (tariff.isDefault) {
@@ -2063,9 +2285,37 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
     _amount.dispose();
     _repaymentAmount.dispose();
     _percent.dispose();
-    _days.dispose();
     _note.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickIssuedAt() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _issuedAt,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+
+    if (picked == null) return;
+    setState(() {
+      _issuedAt = dateOnly(picked);
+      if (_dueAt.isBefore(_issuedAt)) {
+        _dueAt = addMonths(_issuedAt, 1);
+      }
+    });
+  }
+
+  Future<void> _pickDueAt() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dueAt,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    );
+
+    if (picked == null) return;
+    setState(() => _dueAt = dateOnly(picked));
   }
 
   @override
@@ -2095,6 +2345,7 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                         ? null
                         : () async {
                             final debtor = await showModalBottomSheet<String>(
+                              useSafeArea: true,
                               context: context,
                               isScrollControlled: true,
                               builder: (_) =>
@@ -2152,6 +2403,18 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                 decoration: const InputDecoration(labelText: 'Дали сумму'),
               ),
               const SizedBox(height: 10),
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: _pickIssuedAt,
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Дата выдачи',
+                    suffixIcon: Icon(Icons.calendar_month_outlined),
+                  ),
+                  child: Text(shortDate(_issuedAt)),
+                ),
+              ),
+              const SizedBox(height: 10),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Фиксированная сумма возврата'),
@@ -2181,10 +2444,16 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                   ),
                 ),
               const SizedBox(height: 10),
-              TextField(
-                controller: _days,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Срок, дней'),
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: _pickDueAt,
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Дата возврата',
+                    suffixIcon: Icon(Icons.event_available_outlined),
+                  ),
+                  child: Text(shortDate(_dueAt)),
+                ),
               ),
               const SizedBox(height: 10),
               TextField(
@@ -2207,24 +2476,16 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
             ),
             FilledButton(
               onPressed: () {
-                final amount = double.tryParse(
-                  _amount.text.replaceAll(',', '.'),
-                );
-                final repaymentAmount = double.tryParse(
-                  _repaymentAmount.text.replaceAll(',', '.'),
-                );
-                final rate = double.tryParse(
-                  _percent.text.replaceAll(',', '.'),
-                );
-                final days = int.tryParse(_days.text);
+                final amount = parseMoneyInput(_amount.text);
+                final repaymentAmount = parseMoneyInput(_repaymentAmount.text);
+                final rate = parseMoneyInput(_percent.text);
                 if (_name.text.trim().isEmpty ||
                     amount == null ||
                     (!_fixedRepayment && rate == null) ||
-                    (_fixedRepayment && repaymentAmount == null) ||
-                    days == null) {
+                    (_fixedRepayment && repaymentAmount == null)) {
                   return;
                 }
-                final issued = dateOnly(DateTime.now());
+                final issued = _issuedAt;
                 Navigator.pop(
                   context,
                   Loan(
@@ -2234,13 +2495,301 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                     principal: amount,
                     repaymentAmount: _fixedRepayment ? repaymentAmount : null,
                     issuedAt: issued,
-                    dueAt: issued.add(Duration(days: days)),
+                    dueAt: _dueAt,
                     dailyPercent: _fixedRepayment ? 0 : rate!,
                     note: _note.text.trim(),
                   ),
                 );
               },
               child: const Text('Создать'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class EditLoanDialog extends StatefulWidget {
+  const EditLoanDialog({required this.loan, super.key});
+
+  final Loan loan;
+
+  @override
+  State<EditLoanDialog> createState() => _EditLoanDialogState();
+}
+
+class _EditLoanDialogState extends State<EditLoanDialog> {
+  late final TextEditingController _name;
+  late final TextEditingController _amount;
+  late final TextEditingController _repaymentAmount;
+  late final TextEditingController _percent;
+  late final TextEditingController _note;
+  late DateTime _issuedAt;
+  late DateTime _dueAt;
+  late bool _fixedRepayment;
+
+  @override
+  void initState() {
+    super.initState();
+    final loan = widget.loan;
+    _name = TextEditingController(text: loan.debtorName);
+    _amount = TextEditingController(text: clearNumber(loan.principal));
+    _repaymentAmount = TextEditingController(
+      text: clearNumber(loan.expectedDue),
+    );
+    _percent = TextEditingController(text: clearNumber(loan.dailyPercent));
+    _note = TextEditingController(text: loan.note);
+    _issuedAt = loan.issuedAt;
+    _dueAt = loan.dueAt;
+    _fixedRepayment =
+        loan.isFixedRepayment || loan.expectedReturnAmount != null;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _amount.dispose();
+    _repaymentAmount.dispose();
+    _percent.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickIssuedAt() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _issuedAt,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    );
+    if (picked == null) return;
+    setState(() => _issuedAt = dateOnly(picked));
+  }
+
+  Future<void> _pickDueAt() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dueAt,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    );
+    if (picked == null) return;
+    setState(() => _dueAt = dateOnly(picked));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dialogWidth = MediaQuery.sizeOf(context).width - 48;
+    return AlertDialog(
+      title: const Text('Редактировать займ'),
+      content: SizedBox(
+        width: dialogWidth.clamp(280, 500).toDouble(),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _name,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Имя должника'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _amount,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Дали сумму'),
+              ),
+              const SizedBox(height: 10),
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: _pickIssuedAt,
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Дата выдачи',
+                    suffixIcon: Icon(Icons.calendar_month_outlined),
+                  ),
+                  child: Text(shortDate(_issuedAt)),
+                ),
+              ),
+              const SizedBox(height: 10),
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: _pickDueAt,
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Дата возврата',
+                    suffixIcon: Icon(Icons.event_available_outlined),
+                  ),
+                  child: Text(shortDate(_dueAt)),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Фиксированная сумма возврата'),
+                value: _fixedRepayment,
+                onChanged: (value) => setState(() => _fixedRepayment = value),
+              ),
+              if (_fixedRepayment)
+                TextField(
+                  controller: _repaymentAmount,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Сколько вернуть всего',
+                  ),
+                )
+              else
+                TextField(
+                  controller: _percent,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Процент в день',
+                  ),
+                ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _note,
+                minLines: 2,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'Комментарий'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final amount = parseMoneyInput(_amount.text);
+                final repaymentAmount = parseMoneyInput(_repaymentAmount.text);
+                final rate = parseMoneyInput(_percent.text);
+                if (_name.text.trim().isEmpty ||
+                    amount == null ||
+                    (_fixedRepayment && repaymentAmount == null) ||
+                    (!_fixedRepayment && rate == null)) {
+                  return;
+                }
+                Navigator.pop(
+                  context,
+                  Loan(
+                    id: widget.loan.id,
+                    debtorName: _name.text.trim(),
+                    phone: widget.loan.phone,
+                    principal: amount,
+                    repaymentAmount: _fixedRepayment ? repaymentAmount : null,
+                    issuedAt: _issuedAt,
+                    dueAt: _dueAt,
+                    dailyPercent: _fixedRepayment ? 0 : rate!,
+                    note: _note.text.trim(),
+                    paidAmount: widget.loan.paidAmount,
+                    archivedAt: widget.loan.archivedAt,
+                    closedAt: widget.loan.closedAt,
+                  ),
+                );
+              },
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class LoanPaymentDraft {
+  const LoanPaymentDraft({required this.amount, required this.note});
+
+  final double amount;
+  final String note;
+}
+
+class AddPaymentDialog extends StatefulWidget {
+  const AddPaymentDialog({required this.loan, super.key});
+
+  final Loan loan;
+
+  @override
+  State<AddPaymentDialog> createState() => _AddPaymentDialogState();
+}
+
+class _AddPaymentDialogState extends State<AddPaymentDialog> {
+  final _amount = TextEditingController();
+  late final TextEditingController _note;
+
+  @override
+  void initState() {
+    super.initState();
+    _note = TextEditingController(text: widget.loan.note);
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dialogWidth = MediaQuery.sizeOf(context).width - 48;
+    return AlertDialog(
+      title: const Text('Частичная оплата'),
+      content: SizedBox(
+        width: dialogWidth.clamp(280, 500).toDouble(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Сейчас осталось: ${money(widget.loan.remainingDue)}',
+              style: const TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _amount,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Сколько внес'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _note,
+              minLines: 2,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Комментарий'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final amount = parseMoneyInput(_amount.text);
+                if (amount == null || amount <= 0) return;
+                Navigator.pop(
+                  context,
+                  LoanPaymentDraft(amount: amount, note: _note.text.trim()),
+                );
+              },
+              child: const Text('Сохранить'),
             ),
           ],
         ),
@@ -2355,12 +2904,8 @@ class _CreateRequestDialogState extends State<CreateRequestDialog> {
             ),
             FilledButton(
               onPressed: () {
-                final amount = double.tryParse(
-                  _amount.text.replaceAll(',', '.'),
-                );
-                final rate = double.tryParse(
-                  _percent.text.replaceAll(',', '.'),
-                );
+                final amount = parseMoneyInput(_amount.text);
+                final rate = parseMoneyInput(_percent.text);
                 final days = int.tryParse(_days.text);
                 if (_name.text.trim().isEmpty ||
                     amount == null ||
@@ -2432,7 +2977,7 @@ class _ScheduleReturnDialogState extends State<ScheduleReturnDialog> {
   void initState() {
     super.initState();
     _loan = widget.initialLoan ?? widget.loans.first;
-    _amount = TextEditingController(text: clearNumber(_loan.expectedDue));
+    _amount = TextEditingController(text: clearNumber(_loan.remainingDue));
     _note = TextEditingController(text: _loan.note);
   }
 
@@ -2472,7 +3017,7 @@ class _ScheduleReturnDialogState extends State<ScheduleReturnDialog> {
                       if (loan == null) return;
                       setState(() {
                         _loan = loan;
-                        _amount.text = clearNumber(loan.expectedDue);
+                        _amount.text = clearNumber(loan.remainingDue);
                         _note.text = loan.note;
                       });
                     }
@@ -2507,9 +3052,7 @@ class _ScheduleReturnDialogState extends State<ScheduleReturnDialog> {
             ),
             FilledButton(
               onPressed: () {
-                final amount = double.tryParse(
-                  _amount.text.replaceAll(',', '.').replaceAll(' ', ''),
-                );
+                final amount = parseMoneyInput(_amount.text);
                 if (amount == null) return;
                 Navigator.pop(
                   context,
@@ -2556,63 +3099,53 @@ class _DebtorPickerSheetState extends State<DebtorPickerSheet> {
         .toList();
 
     return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 18,
-          right: 18,
-          top: 14,
-          bottom: MediaQuery.viewInsetsOf(context).bottom + 18,
-        ),
-        child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.72,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Выбрать должника',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _search,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  labelText: 'Поиск по имени',
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: items.isEmpty
-                    ? const Center(child: Text('Ничего не найдено'))
-                    : ListView.separated(
-                        itemCount: items.length,
-                        separatorBuilder: (_, _) => const Divider(height: 1),
-                        itemBuilder: (_, index) {
-                          final name = items[index];
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: debtorColor(
-                                name,
-                              ).withValues(alpha: 0.18),
-                              child: Text(
-                                initials(name),
-                                style: const TextStyle(
-                                  color: Color(0xFF123D34),
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            title: Text(name),
-                            onTap: () => Navigator.pop(context, name),
-                          );
-                        },
-                      ),
-              ),
-            ],
+      child: Column(
+        // mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Выбрать должника',
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
           ),
-        ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _search,
+            autofocus: true,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              labelText: 'Поиск по имени',
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: items.isEmpty
+                ? const Center(child: Text('Ничего не найдено'))
+                : ListView.separated(
+                    itemCount: items.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (_, index) {
+                      final name = items[index];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: debtorColor(
+                            name,
+                          ).withValues(alpha: 0.18),
+                          child: Text(
+                            initials(name),
+                            style: const TextStyle(
+                              color: Color(0xFF123D34),
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        title: Text(name),
+                        onTap: () => Navigator.pop(context, name),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -2684,6 +3217,8 @@ class Loan {
     required this.dailyPercent,
     required this.note,
     this.expectedReturnAmount,
+    this.paidAmount = 0,
+    this.archivedAt,
     this.closedAt,
   });
 
@@ -2697,6 +3232,8 @@ class Loan {
   final double dailyPercent;
   final String note;
   final double? expectedReturnAmount;
+  final double paidAmount;
+  final DateTime? archivedAt;
   DateTime? closedAt;
 
   bool get isActive => closedAt == null;
@@ -2705,7 +3242,7 @@ class Loan {
   double get dailyInterest =>
       isFixedRepayment ? 0 : principal * dailyPercent / 100;
   String get conditionLabel => isFixedRepayment
-      ? 'вернуть ${money(expectedDue)}'
+      ? 'вернуть ${money(remainingDue)}'
       : '${percent(dailyPercent)} в день';
   int get accruedDays => accrualDates.length;
   double get interest {
@@ -2718,6 +3255,10 @@ class Loan {
 
   double get totalDue => repaymentAmount ?? principal + interest;
   double get expectedDue => expectedReturnAmount ?? totalDue;
+  double get remainingDue {
+    final value = expectedDue - paidAmount;
+    return value > 0 ? value : 0;
+  }
 
   List<DateTime> get accrualDates {
     if (calculationEnd.isBefore(issuedAt)) return [];
@@ -2735,6 +3276,8 @@ class Loan {
   Loan copyWith({
     DateTime? dueAt,
     double? expectedReturnAmount,
+    double? paidAmount,
+    DateTime? archivedAt,
     String? note,
     DateTime? closedAt,
   }) {
@@ -2749,6 +3292,8 @@ class Loan {
       dailyPercent: dailyPercent,
       note: note ?? this.note,
       expectedReturnAmount: expectedReturnAmount ?? this.expectedReturnAmount,
+      paidAmount: paidAmount ?? this.paidAmount,
+      archivedAt: archivedAt ?? this.archivedAt,
       closedAt: closedAt ?? this.closedAt,
     );
   }
@@ -2764,6 +3309,8 @@ class Loan {
     'dailyPercent': dailyPercent,
     'note': note,
     'expectedReturnAmount': expectedReturnAmount,
+    'paidAmount': paidAmount,
+    'archivedAt': archivedAt?.toIso8601String(),
     'closedAt': closedAt?.toIso8601String(),
   };
 
@@ -2778,6 +3325,10 @@ class Loan {
     dailyPercent: (json['dailyPercent'] as num).toDouble(),
     note: (json['note'] ?? '') as String,
     expectedReturnAmount: (json['expectedReturnAmount'] as num?)?.toDouble(),
+    paidAmount: (json['paidAmount'] as num?)?.toDouble() ?? 0,
+    archivedAt: json['archivedAt'] == null
+        ? null
+        : DateTime.parse(json['archivedAt'] as String),
     closedAt: json['closedAt'] == null
         ? null
         : DateTime.parse(json['closedAt'] as String),
@@ -3167,6 +3718,19 @@ class DebtRepository {
 }
 
 DateTime dateOnly(DateTime date) => DateTime(date.year, date.month, date.day);
+DateTime addMonths(DateTime date, int months) {
+  final targetMonth = date.month + months;
+  final firstOfTarget = DateTime(date.year, targetMonth);
+  final lastDay = DateTime(firstOfTarget.year, firstOfTarget.month + 1, 0).day;
+  final day = date.day > lastDay ? lastDay : date.day;
+  return DateTime(firstOfTarget.year, firstOfTarget.month, day);
+}
+
+int daysBetweenInclusive(DateTime start, DateTime end) {
+  final value = dateOnly(end).difference(dateOnly(start)).inDays + 1;
+  return value > 0 ? value : 0;
+}
+
 List<DateTime> daysInMonth(DateTime month) {
   final count = DateTime(month.year, month.month + 1, 0).day;
   return List.generate(
@@ -3193,6 +3757,9 @@ String money(double value, {int decimals = 0}) {
   final integer = groups.reversed.join(' ');
   return '${parts.length == 2 ? '$integer,${parts[1]}' : integer} ₽';
 }
+
+double? parseMoneyInput(String value) =>
+    double.tryParse(value.replaceAll(',', '.').replaceAll(' ', ''));
 
 String clearNumber(double value) {
   if (value == value.roundToDouble()) {
