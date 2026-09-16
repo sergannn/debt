@@ -1680,11 +1680,12 @@ class LoanTile extends StatelessWidget {
                   children: [
                     Text(
                       loan.debtorName,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 17,
+                        fontSize: 16,
                         fontWeight: FontWeight.w800,
+                        height: 1.08,
                       ),
                     ),
                     const SizedBox(height: 3),
@@ -1701,31 +1702,38 @@ class LoanTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    money(loan.remainingDue),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
+              SizedBox(
+                width: 104,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        money(loan.remainingDue),
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    loan.isActive
-                        ? '${daysBetweenInclusive(loan.issuedAt, loan.dueAt)} дн.'
-                        : 'закрыт',
-                    style: TextStyle(
-                      color: loan.isActive
-                          ? const Color(0xFF9A5B2C)
-                          : Colors.black45,
-                      fontSize: 12,
+                    const SizedBox(height: 4),
+                    Text(
+                      loan.isActive
+                          ? '${daysBetweenInclusive(loan.issuedAt, loan.dueAt)} дн.'
+                          : 'закрыт',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        color: loan.isActive
+                            ? const Color(0xFF9A5B2C)
+                            : Colors.black45,
+                        fontSize: 12,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               const SizedBox(width: 2),
               const Icon(Icons.chevron_right, color: Colors.black38, size: 20),
@@ -2415,11 +2423,9 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                 ),
               ),
               const SizedBox(height: 10),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Фиксированная сумма возврата'),
-                subtitle: const Text('Например: дали 1000, вернуть 1200'),
+              FixedRepaymentToggle(
                 value: _fixedRepayment,
+                subtitle: 'Например: дали 1000, вернуть 1200',
                 onChanged: (value) => setState(() {
                   _fixedRepayment = value;
                   if (value && _repaymentAmount.text.trim().isEmpty) {
@@ -2427,6 +2433,7 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                   }
                 }),
               ),
+              const SizedBox(height: 10),
               if (_fixedRepayment)
                 TextField(
                   controller: _repaymentAmount,
@@ -2625,12 +2632,11 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
                 ),
               ),
               const SizedBox(height: 10),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Фиксированная сумма возврата'),
+              FixedRepaymentToggle(
                 value: _fixedRepayment,
                 onChanged: (value) => setState(() => _fixedRepayment = value),
               ),
+              const SizedBox(height: 10),
               if (_fixedRepayment)
                 TextField(
                   controller: _repaymentAmount,
@@ -3201,6 +3207,69 @@ class StatusChip extends StatelessWidget {
           ? const Color(0xFFDCEAE3)
           : const Color(0xFFF4DEDE),
       side: BorderSide.none,
+    );
+  }
+}
+
+class FixedRepaymentToggle extends StatelessWidget {
+  const FixedRepaymentToggle({
+    required this.value,
+    required this.onChanged,
+    this.subtitle,
+    super.key,
+  });
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Фиксированная сумма возврата',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      height: 1.16,
+                    ),
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.black54,
+                        fontSize: 12,
+                        height: 1.15,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Switch(value: value, onChanged: onChanged),
+          ],
+        ),
+      ),
     );
   }
 }
