@@ -2305,7 +2305,7 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
       }
     }
     _percent = TextEditingController(
-      text: (defaultTariff?.dailyPercent ?? 0.5).toString(),
+      text: clearNumber(defaultTariff?.dailyPercent ?? 0.5),
     );
   }
 
@@ -2475,8 +2475,13 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
               else
                 TextField(
                   controller: _percent,
-                  keyboardType: TextInputType.number,
-                  decoration: dialogInputDecoration('Процент в день'),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: dialogInputDecoration(
+                    'Процент в день',
+                    suffixText: '% в день',
+                  ),
                 ),
               const SizedBox(height: 10),
               InkWell(
@@ -2683,8 +2688,13 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
               else
                 TextField(
                   controller: _percent,
-                  keyboardType: TextInputType.number,
-                  decoration: dialogInputDecoration('Процент в день'),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: dialogInputDecoration(
+                    'Процент в день',
+                    suffixText: '% в день',
+                  ),
                 ),
               const SizedBox(height: 10),
               TextField(
@@ -2865,7 +2875,7 @@ class _CreateRequestDialogState extends State<CreateRequestDialog> {
       }
     }
     _percent = TextEditingController(
-      text: (defaultTariff?.dailyPercent ?? 0.5).toString(),
+      text: clearNumber(defaultTariff?.dailyPercent ?? 0.5),
     );
   }
 
@@ -2926,8 +2936,13 @@ class _CreateRequestDialogState extends State<CreateRequestDialog> {
               const SizedBox(height: 10),
               TextField(
                 controller: _percent,
-                keyboardType: TextInputType.number,
-                decoration: dialogInputDecoration('Процент в день'),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: dialogInputDecoration(
+                  'Процент в день',
+                  suffixText: '% в день',
+                ),
               ),
               const SizedBox(height: 10),
               TextField(
@@ -3872,13 +3887,21 @@ String money(double value, {int decimals = 0}) {
 double? parseMoneyInput(String value) =>
     double.tryParse(value.replaceAll(',', '.').replaceAll(' ', ''));
 
-InputDecoration dialogInputDecoration(String hint, {Widget? suffixIcon}) =>
-    InputDecoration(
-      hintText: hint,
-      floatingLabelBehavior: FloatingLabelBehavior.never,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-      suffixIcon: suffixIcon,
-    );
+InputDecoration dialogInputDecoration(
+  String hint, {
+  Widget? suffixIcon,
+  String? suffixText,
+}) => InputDecoration(
+  hintText: hint,
+  floatingLabelBehavior: FloatingLabelBehavior.never,
+  contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+  suffixIcon: suffixIcon,
+  suffixText: suffixText,
+  suffixStyle: const TextStyle(
+    color: Color(0xFF65746B),
+    fontWeight: FontWeight.w700,
+  ),
+);
 
 String clearNumber(double value) {
   if (value == value.roundToDouble()) {
