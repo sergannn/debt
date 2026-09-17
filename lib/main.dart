@@ -1660,6 +1660,7 @@ class LoanTile extends StatelessWidget {
         child: Padding(
           padding: EdgeInsets.all(compact ? 14 : 16),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               CircleAvatar(
                 radius: compact ? 22 : 24,
@@ -1679,19 +1680,66 @@ class LoanTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      loan.debtorName,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        height: 1.08,
-                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            loan.debtorName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              height: 1.08,
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: compact ? 6 : 8),
+                        SizedBox(
+                          width: compact ? 86 : 98,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  money(loan.remainingDue),
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                loan.isActive
+                                    ? '${daysBetweenInclusive(loan.issuedAt, loan.dueAt)} дн.'
+                                    : 'закрыт',
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                  color: loan.isActive
+                                      ? const Color(0xFF9A5B2C)
+                                      : Colors.black45,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 1),
+                        const Icon(
+                          Icons.chevron_right,
+                          color: Colors.black38,
+                          size: 18,
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 4),
                     Text(
-                      '${shortDate(loan.issuedAt)} → ${shortDate(loan.dueAt)}',
+                      '${compactDate(loan.issuedAt)} → ${compactDate(loan.dueAt)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -1706,48 +1754,12 @@ class LoanTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.black54,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(width: compact ? 6 : 8),
-              SizedBox(
-                width: compact ? 86 : 98,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        money(loan.remainingDue),
-                        maxLines: 1,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      loan.isActive
-                          ? '${daysBetweenInclusive(loan.issuedAt, loan.dueAt)} дн.'
-                          : 'закрыт',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        color: loan.isActive
-                            ? const Color(0xFF9A5B2C)
-                            : Colors.black45,
                         fontSize: 12,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 1),
-              const Icon(Icons.chevron_right, color: Colors.black38, size: 18),
             ],
           ),
         ),
@@ -2361,7 +2373,7 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
               TextField(
                 controller: _name,
                 focusNode: _nameFocus,
-                decoration: const InputDecoration(labelText: 'Имя должника'),
+                decoration: dialogInputDecoration('Имя должника'),
               ),
               const SizedBox(height: 8),
               Wrap(
@@ -2428,16 +2440,16 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
               TextField(
                 controller: _amount,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Дали сумму'),
+                decoration: dialogInputDecoration('Дали сумму'),
               ),
               const SizedBox(height: 10),
               InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: _pickIssuedAt,
                 child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Дата выдачи',
-                    suffixIcon: Icon(Icons.calendar_month_outlined),
+                  decoration: dialogInputDecoration(
+                    'Дата выдачи',
+                    suffixIcon: const Icon(Icons.calendar_month_outlined),
                   ),
                   child: Text(shortDate(_issuedAt)),
                 ),
@@ -2458,26 +2470,22 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                 TextField(
                   controller: _repaymentAmount,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Сколько вернуть',
-                  ),
+                  decoration: dialogInputDecoration('Сколько вернуть'),
                 )
               else
                 TextField(
                   controller: _percent,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Процент в день',
-                  ),
+                  decoration: dialogInputDecoration('Процент в день'),
                 ),
               const SizedBox(height: 10),
               InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: _pickDueAt,
                 child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Дата возврата',
-                    suffixIcon: Icon(Icons.event_available_outlined),
+                  decoration: dialogInputDecoration(
+                    'Дата возврата',
+                    suffixIcon: const Icon(Icons.event_available_outlined),
                   ),
                   child: Text(shortDate(_dueAt)),
                 ),
@@ -2485,7 +2493,7 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
               const SizedBox(height: 10),
               TextField(
                 controller: _note,
-                decoration: const InputDecoration(labelText: 'Комментарий'),
+                decoration: dialogInputDecoration('Комментарий'),
               ),
             ],
           ),
@@ -2628,22 +2636,22 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
               TextField(
                 controller: _name,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: 'Имя должника'),
+                decoration: dialogInputDecoration('Имя должника'),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _amount,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Дали сумму'),
+                decoration: dialogInputDecoration('Дали сумму'),
               ),
               const SizedBox(height: 10),
               InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: _pickIssuedAt,
                 child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Дата выдачи',
-                    suffixIcon: Icon(Icons.calendar_month_outlined),
+                  decoration: dialogInputDecoration(
+                    'Дата выдачи',
+                    suffixIcon: const Icon(Icons.calendar_month_outlined),
                   ),
                   child: Text(shortDate(_issuedAt)),
                 ),
@@ -2653,9 +2661,9 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
                 borderRadius: BorderRadius.circular(12),
                 onTap: _pickDueAt,
                 child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Дата возврата',
-                    suffixIcon: Icon(Icons.event_available_outlined),
+                  decoration: dialogInputDecoration(
+                    'Дата возврата',
+                    suffixIcon: const Icon(Icons.event_available_outlined),
                   ),
                   child: Text(shortDate(_dueAt)),
                 ),
@@ -2670,24 +2678,20 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
                 TextField(
                   controller: _repaymentAmount,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Сколько вернуть всего',
-                  ),
+                  decoration: dialogInputDecoration('Сколько вернуть всего'),
                 )
               else
                 TextField(
                   controller: _percent,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Процент в день',
-                  ),
+                  decoration: dialogInputDecoration('Процент в день'),
                 ),
               const SizedBox(height: 10),
               TextField(
                 controller: _note,
                 minLines: 2,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Комментарий'),
+                decoration: dialogInputDecoration('Комментарий'),
               ),
             ],
           ),
@@ -2899,38 +2903,38 @@ class _CreateRequestDialogState extends State<CreateRequestDialog> {
               TextField(
                 controller: _name,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: 'Кто просит'),
+                decoration: dialogInputDecoration('Кто просит'),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _phone,
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Телефон'),
+                decoration: dialogInputDecoration('Телефон'),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _amount,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Сумма заявки'),
+                decoration: dialogInputDecoration('Сумма заявки'),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _days,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'На сколько дней'),
+                decoration: dialogInputDecoration('На сколько дней'),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _percent,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Процент в день'),
+                decoration: dialogInputDecoration('Процент в день'),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _purpose,
                 minLines: 2,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Комментарий'),
+                decoration: dialogInputDecoration('Комментарий'),
               ),
             ],
           ),
@@ -3868,6 +3872,14 @@ String money(double value, {int decimals = 0}) {
 double? parseMoneyInput(String value) =>
     double.tryParse(value.replaceAll(',', '.').replaceAll(' ', ''));
 
+InputDecoration dialogInputDecoration(String hint, {Widget? suffixIcon}) =>
+    InputDecoration(
+      hintText: hint,
+      floatingLabelBehavior: FloatingLabelBehavior.never,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+      suffixIcon: suffixIcon,
+    );
+
 String clearNumber(double value) {
   if (value == value.roundToDouble()) {
     return value.round().toString();
@@ -3877,6 +3889,8 @@ String clearNumber(double value) {
 
 String percent(double value) =>
     '${value.toStringAsFixed(2).replaceAll('.', ',')}%';
+String compactDate(DateTime value) =>
+    '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${(value.year % 100).toString().padLeft(2, '0')}';
 String shortDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${value.year}';
 String longDate(DateTime value) {
