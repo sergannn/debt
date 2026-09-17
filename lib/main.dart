@@ -2443,16 +2443,11 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                 decoration: dialogInputDecoration('Дали сумму'),
               ),
               const SizedBox(height: 10),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
+              DialogDateField(
+                label: 'Дата выдачи',
+                value: shortDate(_issuedAt),
+                icon: Icons.calendar_month_outlined,
                 onTap: _pickIssuedAt,
-                child: InputDecorator(
-                  decoration: dialogInputDecoration(
-                    'Дата выдачи',
-                    suffixIcon: const Icon(Icons.calendar_month_outlined),
-                  ),
-                  child: Text(shortDate(_issuedAt)),
-                ),
               ),
               const SizedBox(height: 10),
               FixedRepaymentToggle(
@@ -2484,16 +2479,11 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                   ),
                 ),
               const SizedBox(height: 10),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
+              DialogDateField(
+                label: 'Дата возврата',
+                value: shortDate(_dueAt),
+                icon: Icons.event_available_outlined,
                 onTap: _pickDueAt,
-                child: InputDecorator(
-                  decoration: dialogInputDecoration(
-                    'Дата возврата',
-                    suffixIcon: const Icon(Icons.event_available_outlined),
-                  ),
-                  child: Text(shortDate(_dueAt)),
-                ),
               ),
               const SizedBox(height: 10),
               TextField(
@@ -2650,28 +2640,18 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
                 decoration: dialogInputDecoration('Дали сумму'),
               ),
               const SizedBox(height: 10),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
+              DialogDateField(
+                label: 'Дата выдачи',
+                value: shortDate(_issuedAt),
+                icon: Icons.calendar_month_outlined,
                 onTap: _pickIssuedAt,
-                child: InputDecorator(
-                  decoration: dialogInputDecoration(
-                    'Дата выдачи',
-                    suffixIcon: const Icon(Icons.calendar_month_outlined),
-                  ),
-                  child: Text(shortDate(_issuedAt)),
-                ),
               ),
               const SizedBox(height: 10),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
+              DialogDateField(
+                label: 'Дата возврата',
+                value: shortDate(_dueAt),
+                icon: Icons.event_available_outlined,
                 onTap: _pickDueAt,
-                child: InputDecorator(
-                  decoration: dialogInputDecoration(
-                    'Дата возврата',
-                    suffixIcon: const Icon(Icons.event_available_outlined),
-                  ),
-                  child: Text(shortDate(_dueAt)),
-                ),
               ),
               const SizedBox(height: 10),
               FixedRepaymentToggle(
@@ -3325,6 +3305,71 @@ class FixedRepaymentToggle extends StatelessWidget {
             const SizedBox(width: 12),
             Switch(value: value, onChanged: onChanged),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class DialogDateField extends StatelessWidget {
+  const DialogDateField({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF65746B),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        height: 1.05,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Icon(icon, color: Color(0xFF3A4641), size: 28),
+            ],
+          ),
         ),
       ),
     );
