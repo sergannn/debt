@@ -1652,16 +1652,17 @@ class LoanTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 390;
     return Card(
       child: InkWell(
         onTap: () => onTap(loan),
         borderRadius: BorderRadius.circular(22),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(compact ? 14 : 16),
           child: Row(
             children: [
               CircleAvatar(
-                radius: 24,
+                radius: compact ? 22 : 24,
                 backgroundColor: loan.isActive
                     ? const Color(0xFFDCEAE3)
                     : const Color(0xFFE7E3DA),
@@ -1673,7 +1674,7 @@ class LoanTile extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: compact ? 10 : 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1690,8 +1691,18 @@ class LoanTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${shortDate(loan.issuedAt)} → ${shortDate(loan.dueAt)}  •  ${loan.conditionLabel}',
-                      maxLines: 2,
+                      '${shortDate(loan.issuedAt)} → ${shortDate(loan.dueAt)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.black54,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      loan.conditionLabel,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.black54,
@@ -1701,9 +1712,9 @@ class LoanTile extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: compact ? 6 : 8),
               SizedBox(
-                width: 104,
+                width: compact ? 86 : 98,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -1735,8 +1746,8 @@ class LoanTile extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 2),
-              const Icon(Icons.chevron_right, color: Colors.black38, size: 20),
+              const SizedBox(width: 1),
+              const Icon(Icons.chevron_right, color: Colors.black38, size: 18),
             ],
           ),
         ),
@@ -2328,16 +2339,25 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final dialogWidth = MediaQuery.sizeOf(context).width - 48;
+    final media = MediaQuery.of(context);
+    final dialogWidth = media.size.width - 48;
+    final contentHeight = (media.size.height - media.viewInsets.bottom - 220)
+        .clamp(260, 520)
+        .toDouble();
     final frequent = widget.recentDebtors.take(6).toList();
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
       title: const Text('Новый займ'),
-      content: SizedBox(
-        width: dialogWidth.clamp(280, 500).toDouble(),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: contentHeight,
+          maxWidth: dialogWidth.clamp(280, 500).toDouble(),
+        ),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              const SizedBox(height: 6),
               TextField(
                 controller: _name,
                 focusNode: _nameFocus,
@@ -2587,15 +2607,24 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final dialogWidth = MediaQuery.sizeOf(context).width - 48;
+    final media = MediaQuery.of(context);
+    final dialogWidth = media.size.width - 48;
+    final contentHeight = (media.size.height - media.viewInsets.bottom - 220)
+        .clamp(260, 520)
+        .toDouble();
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
       title: const Text('Редактировать займ'),
-      content: SizedBox(
-        width: dialogWidth.clamp(280, 500).toDouble(),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: contentHeight,
+          maxWidth: dialogWidth.clamp(280, 500).toDouble(),
+        ),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              const SizedBox(height: 6),
               TextField(
                 controller: _name,
                 autofocus: true,
@@ -2849,15 +2878,24 @@ class _CreateRequestDialogState extends State<CreateRequestDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final dialogWidth = MediaQuery.sizeOf(context).width - 48;
+    final media = MediaQuery.of(context);
+    final dialogWidth = media.size.width - 48;
+    final contentHeight = (media.size.height - media.viewInsets.bottom - 220)
+        .clamp(260, 520)
+        .toDouble();
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
       title: const Text('Новая заявка'),
-      content: SizedBox(
-        width: dialogWidth.clamp(280, 500).toDouble(),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: contentHeight,
+          maxWidth: dialogWidth.clamp(280, 500).toDouble(),
+        ),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              const SizedBox(height: 6),
               TextField(
                 controller: _name,
                 autofocus: true,
