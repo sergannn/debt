@@ -66,6 +66,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
   int _section = 1;
   DebtorSortMode _debtorSortMode = DebtorSortMode.dueDate;
   bool _showDebtorTotals = true;
+  bool _storeOnServer = true;
   bool _loading = true;
 
   @override
@@ -84,6 +85,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
       _debtorPhotos = data.debtorPhotos;
       _debtorSortMode = data.debtorSortMode;
       _showDebtorTotals = data.showDebtorTotals;
+      _storeOnServer = data.storeOnServer;
       _loading = false;
     });
   }
@@ -95,6 +97,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
     _showDebtorTotals,
     _debtorPhotos,
     _debtorSortMode,
+    _storeOnServer,
   );
 
   @override
@@ -135,7 +138,11 @@ class _DebtHomePageState extends State<DebtHomePage> {
       _ => TariffsView(
         tariffs: _tariffs,
         showDebtorTotals: _showDebtorTotals,
+        storeOnServer: _storeOnServer,
         onShowDebtorTotalsChanged: _setShowDebtorTotals,
+        onStoreOnServerChanged: _setStoreOnServer,
+        onSaveSnapshot: _saveSnapshotToServer,
+        onLoadSnapshot: _loadSnapshotFromServer,
         onEditTariff: _editTariff,
       ),
     };
@@ -431,6 +438,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
       _tariffs = data.tariffs;
       _showDebtorTotals = data.showDebtorTotals;
       _debtorSortMode = data.debtorSortMode;
+      _storeOnServer = data.storeOnServer;
     });
     await _save();
   }
@@ -443,6 +451,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
       _tariffs = data.tariffs;
       _showDebtorTotals = data.showDebtorTotals;
       _debtorSortMode = data.debtorSortMode;
+      _storeOnServer = data.storeOnServer;
     });
     await _save();
   }
@@ -456,6 +465,73 @@ class _DebtHomePageState extends State<DebtHomePage> {
   Future<void> _setShowDebtorTotals(bool value) async {
     setState(() => _showDebtorTotals = value);
     await _save();
+  }
+
+  Future<void> _setStoreOnServer(bool value) async {
+    setState(() => _storeOnServer = value);
+    await _save();
+    final available = await _repository.setStoreOnServer(value);
+    if (!mounted || !value) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          available
+              ? 'Серверное хранение включено'
+              : 'Настройка сохранена. Сервер сейчас не ответил.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveSnapshotToServer() async {
+    try {
+      await _repository.saveSnapshot(
+        DebtData(
+          loans: _loans,
+          requests: _requests,
+          tariffs: _tariffs,
+          debtorPhotos: _debtorPhotos,
+          debtorSortMode: _debtorSortMode,
+          showDebtorTotals: _showDebtorTotals,
+          storeOnServer: _storeOnServer,
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('JSON сохранен на сервере')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось сохранить JSON на сервере')),
+      );
+    }
+  }
+
+  Future<void> _loadSnapshotFromServer() async {
+    try {
+      final data = await _repository.loadSnapshot();
+      if (!mounted) return;
+      setState(() {
+        _loans = data.loans;
+        _requests = data.requests;
+        _tariffs = data.tariffs;
+        _debtorPhotos = data.debtorPhotos;
+        _debtorSortMode = data.debtorSortMode;
+        _showDebtorTotals = data.showDebtorTotals;
+        _storeOnServer = data.storeOnServer;
+      });
+      await _save();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('JSON загружен с сервера')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('На сервере нет сохраненного JSON')),
+      );
+    }
   }
 
   Future<void> _setDebtorPhoto(String debtorName, String? path) async {
@@ -491,6 +567,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
       _requests = data.requests;
       _showDebtorTotals = data.showDebtorTotals;
       _debtorSortMode = data.debtorSortMode;
+      _storeOnServer = data.storeOnServer;
     });
   }
 }
@@ -1821,14 +1898,22 @@ class TariffsView extends StatelessWidget {
   const TariffsView({
     required this.tariffs,
     required this.showDebtorTotals,
+    required this.storeOnServer,
     required this.onShowDebtorTotalsChanged,
+    required this.onStoreOnServerChanged,
+    required this.onSaveSnapshot,
+    required this.onLoadSnapshot,
     required this.onEditTariff,
     super.key,
   });
 
   final List<DebtTariff> tariffs;
   final bool showDebtorTotals;
+  final bool storeOnServer;
   final ValueChanged<bool> onShowDebtorTotalsChanged;
+  final ValueChanged<bool> onStoreOnServerChanged;
+  final VoidCallback onSaveSnapshot;
+  final VoidCallback onLoadSnapshot;
   final ValueChanged<DebtTariff> onEditTariff;
 
   @override
@@ -1845,22 +1930,84 @@ class TariffsView extends StatelessWidget {
         SliverPadding(
           padding: const EdgeInsets.only(top: 20),
           sliver: SliverToBoxAdapter(
-            child: Card(
-              child: SwitchListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
+            child: Column(
+              children: [
+                Card(
+                  child: SwitchListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    value: showDebtorTotals,
+                    onChanged: onShowDebtorTotalsChanged,
+                    title: const Text(
+                      'Показывать общую сумму в списке должников',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: const Text(
+                      'Если выключить, в списке останутся имена и ближайший возврат.',
+                    ),
+                  ),
                 ),
-                value: showDebtorTotals,
-                onChanged: onShowDebtorTotalsChanged,
-                title: const Text(
-                  'Показывать общую сумму в списке должников',
-                  style: TextStyle(fontWeight: FontWeight.w800),
+                const SizedBox(height: 10),
+                Card(
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        value: storeOnServer,
+                        onChanged: onStoreOnServerChanged,
+                        title: const Text(
+                          'Хранить долги на сервере',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: const Text(
+                          'Если выключить, изменения останутся только на этом телефоне.',
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const Text(
+                              'Ручная копия JSON',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Можно отдельно сохранить текущие данные на сервер или загрузить последнюю копию.',
+                            ),
+                            const SizedBox(height: 14),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: onSaveSnapshot,
+                                  icon: const Icon(Icons.cloud_upload_outlined),
+                                  label: const Text('Сохранить на сервер'),
+                                ),
+                                FilledButton.icon(
+                                  onPressed: onLoadSnapshot,
+                                  icon: const Icon(
+                                    Icons.cloud_download_outlined,
+                                  ),
+                                  label: const Text('Загрузить с сервера'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                subtitle: const Text(
-                  'Если выключить, в списке останутся имена и ближайший возврат.',
-                ),
-              ),
+              ],
             ),
           ),
         ),
@@ -4272,6 +4419,7 @@ class DebtData {
     this.debtorPhotos = const {},
     this.debtorSortMode = DebtorSortMode.dueDate,
     this.showDebtorTotals = true,
+    this.storeOnServer = true,
   });
   final List<Loan> loans;
   final List<LoanRequest> requests;
@@ -4279,6 +4427,7 @@ class DebtData {
   final Map<String, String> debtorPhotos;
   final DebtorSortMode debtorSortMode;
   final bool showDebtorTotals;
+  final bool storeOnServer;
 
   DebtData withLocalSettings(DebtData local) => DebtData(
     loans: loans,
@@ -4287,7 +4436,52 @@ class DebtData {
     debtorPhotos: local.debtorPhotos,
     debtorSortMode: local.debtorSortMode,
     showDebtorTotals: local.showDebtorTotals,
+    storeOnServer: local.storeOnServer,
   );
+
+  Map<String, dynamic> toJson() => {
+    'loans': loans.map((item) => item.toJson()).toList(),
+    'requests': requests.map((item) => item.toJson()).toList(),
+    'tariffs': tariffs.map((item) => item.toJson()).toList(),
+    'showDebtorTotals': showDebtorTotals,
+    'storeOnServer': storeOnServer,
+    'debtorPhotos': debtorPhotos,
+    'debtorSortMode': debtorSortMode.name,
+  };
+
+  factory DebtData.fromJson(Map<String, dynamic> json, DebtData fallback) {
+    final tariffsJson = json['tariffs'] as List?;
+    final photosJson = json['debtorPhotos'];
+    return DebtData(
+      loans: (json['loans'] as List? ?? const [])
+          .map((item) => Loan.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList(),
+      requests: (json['requests'] as List? ?? const [])
+          .map(
+            (item) =>
+                LoanRequest.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .toList(),
+      tariffs: tariffsJson == null || tariffsJson.isEmpty
+          ? fallback.tariffs
+          : tariffsJson
+                .map(
+                  (item) => DebtTariff.fromJson(
+                    Map<String, dynamic>.from(item as Map),
+                  ),
+                )
+                .toList(),
+      debtorPhotos: photosJson is Map
+          ? Map<String, String>.from(photosJson)
+          : fallback.debtorPhotos,
+      debtorSortMode: debtorSortModeFromJson(
+        json['debtorSortMode'] ?? fallback.debtorSortMode.name,
+      ),
+      showDebtorTotals:
+          json['showDebtorTotals'] as bool? ?? fallback.showDebtorTotals,
+      storeOnServer: json['storeOnServer'] as bool? ?? fallback.storeOnServer,
+    );
+  }
 }
 
 class DebtRepository {
@@ -4295,10 +4489,19 @@ class DebtRepository {
   static const _apiBase = 'https://college.panfilius.ru/api/debts';
 
   bool _remoteAvailable = false;
+  bool _storeOnServer = true;
+
+  bool get _canUseRemote => _storeOnServer && _remoteAvailable;
 
   Future<DebtData> load() async {
     final hasLocalStore = await _hasLocalStore();
     final local = await _loadLocalData();
+    _storeOnServer = local.storeOnServer;
+
+    if (!_storeOnServer) {
+      _remoteAvailable = false;
+      return local;
+    }
 
     try {
       _remoteAvailable = true;
@@ -4327,31 +4530,7 @@ class DebtRepository {
     final stored = prefs.getString(_key);
     if (stored == null) return seedData();
     final json = jsonDecode(stored) as Map<String, dynamic>;
-    final fallbackTariffs = seedData().tariffs;
-    return DebtData(
-      loans: (json['loans'] as List)
-          .map((item) => Loan.fromJson(Map<String, dynamic>.from(item as Map)))
-          .toList(),
-      requests: (json['requests'] as List)
-          .map(
-            (item) =>
-                LoanRequest.fromJson(Map<String, dynamic>.from(item as Map)),
-          )
-          .toList(),
-      tariffs:
-          (json['tariffs'] as List?)
-              ?.map(
-                (item) =>
-                    DebtTariff.fromJson(Map<String, dynamic>.from(item as Map)),
-              )
-              .toList() ??
-          fallbackTariffs,
-      debtorPhotos: Map<String, String>.from(
-        (json['debtorPhotos'] as Map?) ?? const {},
-      ),
-      debtorSortMode: debtorSortModeFromJson(json['debtorSortMode']),
-      showDebtorTotals: json['showDebtorTotals'] != false,
-    );
+    return DebtData.fromJson(json, seedData());
   }
 
   Future<void> _uploadLocalData(DebtData data) async {
@@ -4372,23 +4551,58 @@ class DebtRepository {
     bool showDebtorTotals,
     Map<String, String> debtorPhotos,
     DebtorSortMode debtorSortMode,
+    bool storeOnServer,
   ) async {
+    _storeOnServer = storeOnServer;
+    if (!_storeOnServer) _remoteAvailable = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _key,
-      jsonEncode({
-        'loans': loans.map((item) => item.toJson()).toList(),
-        'requests': requests.map((item) => item.toJson()).toList(),
-        'tariffs': tariffs.map((item) => item.toJson()).toList(),
-        'showDebtorTotals': showDebtorTotals,
-        'debtorPhotos': debtorPhotos,
-        'debtorSortMode': debtorSortMode.name,
-      }),
+      jsonEncode(
+        DebtData(
+          loans: loans,
+          requests: requests,
+          tariffs: tariffs,
+          debtorPhotos: debtorPhotos,
+          debtorSortMode: debtorSortMode,
+          showDebtorTotals: showDebtorTotals,
+          storeOnServer: storeOnServer,
+        ).toJson(),
+      ),
     );
   }
 
+  Future<bool> setStoreOnServer(bool value) async {
+    _storeOnServer = value;
+    if (!value) {
+      _remoteAvailable = false;
+      return false;
+    }
+    try {
+      await _fetchOverview();
+      _remoteAvailable = true;
+      return true;
+    } catch (_) {
+      _remoteAvailable = false;
+      return false;
+    }
+  }
+
+  Future<void> saveSnapshot(DebtData data) async {
+    await _post('/snapshot', {'snapshot': data.toJson()}, forceRemote: true);
+  }
+
+  Future<DebtData> loadSnapshot() async {
+    final response = await _get('/snapshot', forceRemote: true);
+    final snapshot = response['snapshot'];
+    if (snapshot is! Map) {
+      throw Exception('Snapshot is empty');
+    }
+    return DebtData.fromJson(Map<String, dynamic>.from(snapshot), seedData());
+  }
+
   Future<Loan> createLoan(Loan loan) async {
-    if (!_remoteAvailable) return loan;
+    if (!_canUseRemote) return loan;
 
     final response = await _post('/loans', _loanBody(loan));
 
@@ -4396,7 +4610,7 @@ class DebtRepository {
   }
 
   Future<Loan> updateLoan(Loan loan) async {
-    if (!_remoteAvailable) return loan;
+    if (!_canUseRemote) return loan;
 
     final response = await _put('/loans/${loan.id}', _loanBody(loan));
 
@@ -4404,7 +4618,7 @@ class DebtRepository {
   }
 
   Future<Loan> addPayment(Loan loan, LoanPaymentDraft payment) async {
-    if (!_remoteAvailable) {
+    if (!_canUseRemote) {
       return loan.copyWith(
         paidAmount: loan.paidAmount + payment.amount,
         note: payment.note.isEmpty ? loan.note : payment.note,
@@ -4420,7 +4634,7 @@ class DebtRepository {
   }
 
   Future<Loan> archiveLoan(Loan loan) async {
-    if (!_remoteAvailable) return loan.copyWith(archivedAt: DateTime.now());
+    if (!_canUseRemote) return loan.copyWith(archivedAt: DateTime.now());
 
     final response = await _post('/loans/${loan.id}/archive', {});
 
@@ -4428,7 +4642,7 @@ class DebtRepository {
   }
 
   Future<void> deleteLoan(Loan loan) async {
-    if (!_remoteAvailable) return;
+    if (!_canUseRemote) return;
 
     await _delete('/loans/${loan.id}');
   }
@@ -4448,7 +4662,7 @@ class DebtRepository {
   };
 
   Future<Loan> closeLoan(Loan loan) async {
-    if (!_remoteAvailable) {
+    if (!_canUseRemote) {
       loan.closedAt = dateOnly(DateTime.now());
       return loan;
     }
@@ -4461,7 +4675,7 @@ class DebtRepository {
   }
 
   Future<DebtData> approveRequest(LoanRequest request) async {
-    if (!_remoteAvailable) {
+    if (!_canUseRemote) {
       final data = await load();
       final target = data.requests.firstWhere(
         (item) => item.id == request.id,
@@ -4489,7 +4703,7 @@ class DebtRepository {
   }
 
   Future<DebtTariff> updateTariff(DebtTariff tariff) async {
-    if (!_remoteAvailable) return tariff;
+    if (!_canUseRemote) return tariff;
 
     final response = await _put('/tariffs/${tariff.id}', {
       'name': tariff.name,
@@ -4504,7 +4718,7 @@ class DebtRepository {
   }
 
   Future<DebtData> rejectRequest(LoanRequest request) async {
-    if (!_remoteAvailable) {
+    if (!_canUseRemote) {
       final data = await load();
       final target = data.requests.firstWhere(
         (item) => item.id == request.id,
@@ -4519,7 +4733,7 @@ class DebtRepository {
   }
 
   Future<LoanRequest> createRequest(LoanRequest request) async {
-    if (!_remoteAvailable) return request;
+    if (!_canUseRemote) return request;
 
     final response = await _post('/requests', {
       'client_name': request.clientName,
@@ -4537,15 +4751,13 @@ class DebtRepository {
   }
 
   Future<void> deleteRequest(LoanRequest request) async {
-    if (!_remoteAvailable) return;
+    if (!_canUseRemote) return;
 
     await _delete('/requests/${request.id}');
   }
 
   Future<DebtData> _fetchOverview() async {
-    final uri = Uri.parse('$_apiBase/overview');
-    final response = await http.get(uri, headers: _headers);
-    final json = _decodeResponse(response);
+    final json = await _get('/overview', forceRemote: true);
 
     return DebtData(
       loans: (json['loans'] as List)
@@ -4568,8 +4780,10 @@ class DebtRepository {
 
   Future<Map<String, dynamic>> _post(
     String path,
-    Map<String, dynamic> body,
-  ) async {
+    Map<String, dynamic> body, {
+    bool forceRemote = false,
+  }) async {
+    if (!forceRemote && !_canUseRemote) return {};
     final response = await http.post(
       Uri.parse('$_apiBase$path'),
       headers: _headers,
@@ -4583,6 +4797,7 @@ class DebtRepository {
     String path,
     Map<String, dynamic> body,
   ) async {
+    if (!_canUseRemote) return {};
     final response = await http.put(
       Uri.parse('$_apiBase$path'),
       headers: _headers,
@@ -4593,7 +4808,21 @@ class DebtRepository {
   }
 
   Future<Map<String, dynamic>> _delete(String path) async {
+    if (!_canUseRemote) return {};
     final response = await http.delete(
+      Uri.parse('$_apiBase$path'),
+      headers: _headers,
+    );
+
+    return _decodeResponse(response);
+  }
+
+  Future<Map<String, dynamic>> _get(
+    String path, {
+    bool forceRemote = false,
+  }) async {
+    if (!forceRemote && !_canUseRemote) return {};
+    final response = await http.get(
       Uri.parse('$_apiBase$path'),
       headers: _headers,
     );
