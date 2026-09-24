@@ -297,9 +297,10 @@ class _DebtHomePageState extends State<DebtHomePage> {
     if (updated == null) return null;
     final index = _loans.indexWhere((item) => item.id == loan.id);
     if (index == -1) return null;
-    setState(() => _loans[index] = updated);
+    final stored = await _repository.updateLoan(updated);
+    setState(() => _loans[index] = stored);
     await _save();
-    return updated;
+    return stored;
   }
 
   Future<Loan?> _addPayment(Loan loan) async {
@@ -310,10 +311,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
     if (payment == null) return null;
     final index = _loans.indexWhere((item) => item.id == loan.id);
     if (index == -1) return null;
-    final updated = loan.copyWith(
-      paidAmount: loan.paidAmount + payment.amount,
-      note: payment.note.isEmpty ? loan.note : payment.note,
-    );
+    final updated = await _repository.addPayment(loan, payment);
     setState(() => _loans[index] = updated);
     await _save();
     return updated;
@@ -322,7 +320,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
   Future<Loan?> _archiveLoan(Loan loan) async {
     final index = _loans.indexWhere((item) => item.id == loan.id);
     if (index == -1) return null;
-    final updated = loan.copyWith(archivedAt: DateTime.now());
+    final updated = await _repository.archiveLoan(loan);
     setState(() => _loans[index] = updated);
     await _save();
     return updated;
@@ -350,6 +348,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
       ),
     );
     if (confirmed != true) return false;
+    await _repository.deleteLoan(loan);
     setState(() => _loans.removeWhere((item) => item.id == loan.id));
     await _save();
     return true;
@@ -361,7 +360,8 @@ class _DebtHomePageState extends State<DebtHomePage> {
       builder: (_) => CreateRequestDialog(tariffs: _tariffs),
     );
     if (request == null) return;
-    setState(() => _requests.insert(0, request));
+    final stored = await _repository.createRequest(request);
+    setState(() => _requests.insert(0, stored));
     await _save();
   }
 
@@ -373,12 +373,15 @@ class _DebtHomePageState extends State<DebtHomePage> {
   ) async {
     final index = _loans.indexWhere((item) => item.id == loan.id);
     if (index == -1) return;
-    setState(() {
-      _loans[index] = loan.copyWith(
+    final updated = await _repository.updateLoan(
+      loan.copyWith(
         dueAt: dateOnly(dueAt),
         expectedReturnAmount: amount,
         note: note.isEmpty ? loan.note : note,
-      );
+      ),
+    );
+    setState(() {
+      _loans[index] = updated;
     });
     await _save();
   }
@@ -445,6 +448,7 @@ class _DebtHomePageState extends State<DebtHomePage> {
   }
 
   Future<void> _deleteRequest(LoanRequest request) async {
+    await _repository.deleteRequest(request);
     setState(() => _requests.removeWhere((item) => item.id == request.id));
     await _save();
   }
@@ -4275,6 +4279,15 @@ class DebtData {
   final Map<String, String> debtorPhotos;
   final DebtorSortMode debtorSortMode;
   final bool showDebtorTotals;
+
+  DebtData withLocalSettings(DebtData local) => DebtData(
+    loans: loans,
+    requests: requests,
+    tariffs: tariffs,
+    debtorPhotos: local.debtorPhotos,
+    debtorSortMode: local.debtorSortMode,
+    showDebtorTotals: local.showDebtorTotals,
+  );
 }
 
 class DebtRepository {
@@ -4284,8 +4297,32 @@ class DebtRepository {
   bool _remoteAvailable = false;
 
   Future<DebtData> load() async {
-    _remoteAvailable = false;
+    final hasLocalStore = await _hasLocalStore();
+    final local = await _loadLocalData();
 
+    try {
+      _remoteAvailable = true;
+      var remote = await _fetchOverview();
+      if (hasLocalStore &&
+          remote.loans.isEmpty &&
+          remote.requests.isEmpty &&
+          (local.loans.isNotEmpty || local.requests.isNotEmpty)) {
+        await _uploadLocalData(local);
+        remote = await _fetchOverview();
+      }
+      return remote.withLocalSettings(local);
+    } catch (_) {
+      _remoteAvailable = false;
+      return local;
+    }
+  }
+
+  Future<bool> _hasLocalStore() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.containsKey(_key);
+  }
+
+  Future<DebtData> _loadLocalData() async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getString(_key);
     if (stored == null) return seedData();
@@ -4317,6 +4354,17 @@ class DebtRepository {
     );
   }
 
+  Future<void> _uploadLocalData(DebtData data) async {
+    for (final loan in data.loans.reversed) {
+      await createLoan(loan);
+    }
+    for (final request in data.requests.reversed) {
+      if (request.status == 'pending') {
+        await createRequest(request);
+      }
+    }
+  }
+
   Future<void> save(
     List<Loan> loans,
     List<LoanRequest> requests,
@@ -4325,8 +4373,6 @@ class DebtRepository {
     Map<String, String> debtorPhotos,
     DebtorSortMode debtorSortMode,
   ) async {
-    if (_remoteAvailable) return;
-
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _key,
@@ -4344,20 +4390,62 @@ class DebtRepository {
   Future<Loan> createLoan(Loan loan) async {
     if (!_remoteAvailable) return loan;
 
-    final response = await _post('/loans', {
-      'debtor_name': loan.debtorName,
-      'phone': loan.phone,
-      'principal': loan.principal,
-      'repayment_amount': loan.repaymentAmount,
-      'issued_at': apiDate(loan.issuedAt),
-      'due_at': loan.dueAt == null ? null : apiDate(loan.dueAt!),
-      'daily_percent': loan.dailyPercent,
-      'monthly_percent': loan.dailyPercent * 30,
-      'note': loan.note,
+    final response = await _post('/loans', _loanBody(loan));
+
+    return Loan.fromJson(Map<String, dynamic>.from(response['loan'] as Map));
+  }
+
+  Future<Loan> updateLoan(Loan loan) async {
+    if (!_remoteAvailable) return loan;
+
+    final response = await _put('/loans/${loan.id}', _loanBody(loan));
+
+    return Loan.fromJson(Map<String, dynamic>.from(response['loan'] as Map));
+  }
+
+  Future<Loan> addPayment(Loan loan, LoanPaymentDraft payment) async {
+    if (!_remoteAvailable) {
+      return loan.copyWith(
+        paidAmount: loan.paidAmount + payment.amount,
+        note: payment.note.isEmpty ? loan.note : payment.note,
+      );
+    }
+
+    final response = await _post('/loans/${loan.id}/payment', {
+      'amount': payment.amount,
+      'note': payment.note,
     });
 
     return Loan.fromJson(Map<String, dynamic>.from(response['loan'] as Map));
   }
+
+  Future<Loan> archiveLoan(Loan loan) async {
+    if (!_remoteAvailable) return loan.copyWith(archivedAt: DateTime.now());
+
+    final response = await _post('/loans/${loan.id}/archive', {});
+
+    return Loan.fromJson(Map<String, dynamic>.from(response['loan'] as Map));
+  }
+
+  Future<void> deleteLoan(Loan loan) async {
+    if (!_remoteAvailable) return;
+
+    await _delete('/loans/${loan.id}');
+  }
+
+  Map<String, dynamic> _loanBody(Loan loan) => {
+    'debtor_name': loan.debtorName,
+    'phone': loan.phone,
+    'principal': loan.principal,
+    'repayment_amount': loan.repaymentAmount,
+    'expected_return_amount': loan.expectedReturnAmount,
+    'paid_amount': loan.paidAmount,
+    'issued_at': apiDate(loan.issuedAt),
+    'due_at': loan.dueAt == null ? null : apiDate(loan.dueAt!),
+    'daily_percent': loan.dailyPercent,
+    'monthly_percent': loan.dailyPercent * 30,
+    'note': loan.note,
+  };
 
   Future<Loan> closeLoan(Loan loan) async {
     if (!_remoteAvailable) {
@@ -4397,7 +4485,7 @@ class DebtRepository {
     }
 
     await _post('/requests/${request.id}/approve', {});
-    return _fetchOverview();
+    return (await _fetchOverview()).withLocalSettings(await _loadLocalData());
   }
 
   Future<DebtTariff> updateTariff(DebtTariff tariff) async {
@@ -4427,7 +4515,31 @@ class DebtRepository {
     }
 
     await _post('/requests/${request.id}/reject', {});
-    return _fetchOverview();
+    return (await _fetchOverview()).withLocalSettings(await _loadLocalData());
+  }
+
+  Future<LoanRequest> createRequest(LoanRequest request) async {
+    if (!_remoteAvailable) return request;
+
+    final response = await _post('/requests', {
+      'client_name': request.clientName,
+      'phone': request.phone,
+      'amount': request.amount,
+      'days': request.days,
+      'daily_percent': request.dailyPercent,
+      'monthly_percent': request.dailyPercent * 30,
+      'purpose': request.purpose,
+    });
+
+    return LoanRequest.fromJson(
+      Map<String, dynamic>.from(response['request'] as Map),
+    );
+  }
+
+  Future<void> deleteRequest(LoanRequest request) async {
+    if (!_remoteAvailable) return;
+
+    await _delete('/requests/${request.id}');
   }
 
   Future<DebtData> _fetchOverview() async {
@@ -4475,6 +4587,15 @@ class DebtRepository {
       Uri.parse('$_apiBase$path'),
       headers: _headers,
       body: jsonEncode(body),
+    );
+
+    return _decodeResponse(response);
+  }
+
+  Future<Map<String, dynamic>> _delete(String path) async {
+    final response = await http.delete(
+      Uri.parse('$_apiBase$path'),
+      headers: _headers,
     );
 
     return _decodeResponse(response);
