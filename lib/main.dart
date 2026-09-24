@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -59,7 +62,10 @@ class _DebtHomePageState extends State<DebtHomePage> {
   List<Loan> _loans = [];
   List<LoanRequest> _requests = [];
   List<DebtTariff> _tariffs = [];
+  Map<String, String> _debtorPhotos = {};
   int _section = 1;
+  DebtorSortMode _debtorSortMode = DebtorSortMode.dueDate;
+  bool _showDebtorTotals = true;
   bool _loading = true;
 
   @override
@@ -75,11 +81,21 @@ class _DebtHomePageState extends State<DebtHomePage> {
       _loans = data.loans;
       _requests = data.requests;
       _tariffs = data.tariffs;
+      _debtorPhotos = data.debtorPhotos;
+      _debtorSortMode = data.debtorSortMode;
+      _showDebtorTotals = data.showDebtorTotals;
       _loading = false;
     });
   }
 
-  Future<void> _save() => _repository.save(_loans, _requests, _tariffs);
+  Future<void> _save() => _repository.save(
+    _loans,
+    _requests,
+    _tariffs,
+    _showDebtorTotals,
+    _debtorPhotos,
+    _debtorSortMode,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +111,15 @@ class _DebtHomePageState extends State<DebtHomePage> {
         onOpenLoan: _openLoan,
         onOpenRequests: () => setState(() => _section = 3),
       ),
-      1 => LoansView(loans: _loans, onOpenLoan: _openLoan, onAddLoan: _addLoan),
+      1 => LoansView(
+        loans: _loans,
+        showTotals: _showDebtorTotals,
+        debtorPhotos: _debtorPhotos,
+        sortMode: _debtorSortMode,
+        onSortModeChanged: _setDebtorSortMode,
+        onOpenDebtor: _openDebtor,
+        onAddLoan: _addLoan,
+      ),
       2 => CalendarView(
         loans: _loans,
         onOpenLoan: _openLoan,
@@ -106,8 +130,14 @@ class _DebtHomePageState extends State<DebtHomePage> {
         onAddRequest: _addRequest,
         onApprove: _approveRequest,
         onReject: _rejectRequest,
+        onDelete: _deleteRequest,
       ),
-      _ => TariffsView(tariffs: _tariffs, onEditTariff: _editTariff),
+      _ => TariffsView(
+        tariffs: _tariffs,
+        showDebtorTotals: _showDebtorTotals,
+        onShowDebtorTotalsChanged: _setShowDebtorTotals,
+        onEditTariff: _editTariff,
+      ),
     };
 
     return Scaffold(
@@ -207,6 +237,23 @@ class _DebtHomePageState extends State<DebtHomePage> {
     setState(() {});
   }
 
+  Future<void> _openDebtor(DebtorAccount debtor) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DebtorProfilePage(
+          debtorName: debtor.name,
+          showTotals: _showDebtorTotals,
+          photoPath: debtorPhotoPath(_debtorPhotos, debtor.name),
+          loansProvider: () => _loans,
+          onOpenLoan: _openLoan,
+          onAddLoanForDebtor: _addLoanForDebtorName,
+          onUpdatePhoto: _setDebtorPhoto,
+        ),
+      ),
+    );
+    setState(() {});
+  }
+
   Future<void> _addLoan() async {
     final loan = await showDialog<Loan>(
       context: context,
@@ -223,13 +270,17 @@ class _DebtHomePageState extends State<DebtHomePage> {
   }
 
   Future<void> _addLoanForDebtor(Loan source) async {
+    await _addLoanForDebtorName(source.debtorName);
+  }
+
+  Future<void> _addLoanForDebtorName(String debtorName) async {
     final loan = await showDialog<Loan>(
       context: context,
       builder: (_) => CreateLoanDialog(
         tariffs: _tariffs,
         debtors: knownDebtors(_loans),
         recentDebtors: recentDebtors(_loans),
-        initialDebtorName: source.debtorName,
+        initialDebtorName: debtorName,
       ),
     );
     if (loan == null) return;
@@ -375,6 +426,8 @@ class _DebtHomePageState extends State<DebtHomePage> {
       _loans = data.loans;
       _requests = data.requests;
       _tariffs = data.tariffs;
+      _showDebtorTotals = data.showDebtorTotals;
+      _debtorSortMode = data.debtorSortMode;
     });
     await _save();
   }
@@ -385,7 +438,36 @@ class _DebtHomePageState extends State<DebtHomePage> {
       _loans = data.loans;
       _requests = data.requests;
       _tariffs = data.tariffs;
+      _showDebtorTotals = data.showDebtorTotals;
+      _debtorSortMode = data.debtorSortMode;
     });
+    await _save();
+  }
+
+  Future<void> _deleteRequest(LoanRequest request) async {
+    setState(() => _requests.removeWhere((item) => item.id == request.id));
+    await _save();
+  }
+
+  Future<void> _setShowDebtorTotals(bool value) async {
+    setState(() => _showDebtorTotals = value);
+    await _save();
+  }
+
+  Future<void> _setDebtorPhoto(String debtorName, String? path) async {
+    final key = debtorKey(debtorName);
+    setState(() {
+      if (path == null || path.isEmpty) {
+        _debtorPhotos.remove(key);
+      } else {
+        _debtorPhotos[key] = path;
+      }
+    });
+    await _save();
+  }
+
+  Future<void> _setDebtorSortMode(DebtorSortMode mode) async {
+    setState(() => _debtorSortMode = mode);
     await _save();
   }
 
@@ -403,6 +485,8 @@ class _DebtHomePageState extends State<DebtHomePage> {
           .toList();
       _loans = data.loans;
       _requests = data.requests;
+      _showDebtorTotals = data.showDebtorTotals;
+      _debtorSortMode = data.debtorSortMode;
     });
   }
 }
@@ -477,7 +561,7 @@ class AppNavigationRail extends StatelessWidget {
           ),
           _NavItem(
             icon: Icons.tune_outlined,
-            label: 'Тарифы',
+            label: 'Настройки',
             selected: selectedIndex == 4,
             onTap: () => onSelected(4),
           ),
@@ -567,7 +651,7 @@ class AppDrawer extends StatelessWidget {
               const Divider(color: Colors.white24, height: 30),
               _NavItem(
                 icon: Icons.tune_outlined,
-                label: 'Управление тарифами',
+                label: 'Настройки',
                 selected: selectedIndex == 4,
                 onTap: () => onSelected(4),
               ),
@@ -745,7 +829,7 @@ class DashboardView extends StatelessWidget {
             separatorBuilder: (_, _) => const SizedBox(height: 10),
             itemBuilder: (_, index) {
               final sorted = [...active]
-                ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
+                ..sort((a, b) => compareNullableDates(a.dueAt, b.dueAt));
               return LoanTile(loan: sorted[index], onTap: onOpenLoan);
             },
           ),
@@ -757,32 +841,76 @@ class DashboardView extends StatelessWidget {
 class LoansView extends StatelessWidget {
   const LoansView({
     required this.loans,
-    required this.onOpenLoan,
+    required this.showTotals,
+    required this.debtorPhotos,
+    required this.sortMode,
+    required this.onSortModeChanged,
+    required this.onOpenDebtor,
     required this.onAddLoan,
     super.key,
   });
 
   final List<Loan> loans;
-  final ValueChanged<Loan> onOpenLoan;
+  final bool showTotals;
+  final Map<String, String> debtorPhotos;
+  final DebtorSortMode sortMode;
+  final ValueChanged<DebtorSortMode> onSortModeChanged;
+  final ValueChanged<DebtorAccount> onOpenDebtor;
   final VoidCallback onAddLoan;
 
   @override
   Widget build(BuildContext context) {
-    final active = loans.where((item) => item.isActive).toList();
-    final closed = loans
-        .where((item) => !item.isActive && item.archivedAt == null)
-        .toList();
+    final active = sortDebtorAccounts(
+      debtorAccounts(loans.where((item) => item.isActive)),
+      sortMode,
+    );
+    final closed = sortDebtorAccounts(
+      debtorAccounts(
+        loans.where((item) => !item.isActive && item.archivedAt == null),
+      ),
+      sortMode,
+    );
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
           child: PageHeader(
-            eyebrow: '${active.length} активных долгов',
+            eyebrow: '${active.length} активных должников',
             title: 'Должники',
-            subtitle: 'Каждый займ с условиями и календарем начислений.',
+            subtitle: 'Один человек — один профиль со всеми займами внутри.',
             action: FilledButton.icon(
               onPressed: onAddLoan,
               icon: const Icon(Icons.add),
               label: const Text('Новый займ'),
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 14, bottom: 4),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SegmentedButton<DebtorSortMode>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(
+                    value: DebtorSortMode.dueDate,
+                    icon: Icon(Icons.event_outlined),
+                    label: Text('Дата'),
+                  ),
+                  ButtonSegment(
+                    value: DebtorSortMode.alphabet,
+                    icon: Icon(Icons.sort_by_alpha),
+                    label: Text('А-Я'),
+                  ),
+                  ButtonSegment(
+                    value: DebtorSortMode.debt,
+                    icon: Icon(Icons.payments_outlined),
+                    label: Text('Долг'),
+                  ),
+                ],
+                selected: {sortMode},
+                onSelectionChanged: (values) => onSortModeChanged(values.first),
+              ),
             ),
           ),
         ),
@@ -797,8 +925,12 @@ class LoansView extends StatelessWidget {
           SliverList.separated(
             itemCount: active.length,
             separatorBuilder: (_, _) => const SizedBox(height: 10),
-            itemBuilder: (_, index) =>
-                LoanTile(loan: active[index], onTap: onOpenLoan),
+            itemBuilder: (_, index) => DebtorTile(
+              debtor: active[index],
+              showTotal: showTotals,
+              photoPath: debtorPhotoPath(debtorPhotos, active[index].name),
+              onTap: onOpenDebtor,
+            ),
           ),
         SliverToBoxAdapter(
           child: SectionLabel(text: 'ЗАКРЫТЫЕ', count: closed.length),
@@ -806,12 +938,412 @@ class LoansView extends StatelessWidget {
         SliverList.separated(
           itemCount: closed.length,
           separatorBuilder: (_, _) => const SizedBox(height: 10),
-          itemBuilder: (_, index) =>
-              LoanTile(loan: closed[index], onTap: onOpenLoan),
+          itemBuilder: (_, index) => DebtorTile(
+            debtor: closed[index],
+            showTotal: showTotals,
+            photoPath: debtorPhotoPath(debtorPhotos, closed[index].name),
+            onTap: onOpenDebtor,
+          ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 90)),
       ],
     );
+  }
+}
+
+enum DebtorSortMode { dueDate, alphabet, debt }
+
+DebtorSortMode debtorSortModeFromJson(Object? value) {
+  final raw = value?.toString();
+  for (final mode in DebtorSortMode.values) {
+    if (mode.name == raw) return mode;
+  }
+  return DebtorSortMode.dueDate;
+}
+
+class DebtorAccount {
+  DebtorAccount({required this.name, required List<Loan> loans})
+    : loans = [...loans]
+        ..sort((a, b) {
+          final left = a.dueAt;
+          final right = b.dueAt;
+          if (left == null && right == null) {
+            return b.issuedAt.compareTo(a.issuedAt);
+          }
+          if (left == null) return 1;
+          if (right == null) return -1;
+          return left.compareTo(right);
+        });
+
+  final String name;
+  final List<Loan> loans;
+
+  List<Loan> get activeLoans => loans.where((loan) => loan.isActive).toList();
+  int get loanCount => loans.length;
+  double get totalRemaining =>
+      activeLoans.fold<double>(0, (sum, loan) => sum + loan.remainingDue);
+  DateTime? get nearestDueAt {
+    DateTime? nearest;
+    for (final loan in activeLoans) {
+      final dueAt = loan.dueAt;
+      if (dueAt == null) continue;
+      if (nearest == null || dueAt.isBefore(nearest)) nearest = dueAt;
+    }
+    return nearest;
+  }
+
+  bool get hasOpenEndedLoan => activeLoans.any((loan) => loan.dueAt == null);
+}
+
+List<DebtorAccount> debtorAccounts(Iterable<Loan> loans) {
+  final grouped = <String, List<Loan>>{};
+  final displayNames = <String, String>{};
+  for (final loan in loans) {
+    final name = loan.debtorName.trim();
+    if (name.isEmpty) continue;
+    final key = name.toLowerCase();
+    grouped.putIfAbsent(key, () => []).add(loan);
+    displayNames.putIfAbsent(key, () => name);
+  }
+  final accounts = grouped.entries
+      .map(
+        (entry) => DebtorAccount(
+          name: displayNames[entry.key] ?? entry.key,
+          loans: entry.value,
+        ),
+      )
+      .toList();
+  accounts.sort((a, b) {
+    final dueCompare = compareNullableDates(a.nearestDueAt, b.nearestDueAt);
+    if (dueCompare != 0) return dueCompare;
+    return b.totalRemaining.compareTo(a.totalRemaining);
+  });
+  return accounts;
+}
+
+List<DebtorAccount> sortDebtorAccounts(
+  List<DebtorAccount> accounts,
+  DebtorSortMode mode,
+) {
+  final sorted = [...accounts];
+  sorted.sort((a, b) {
+    return switch (mode) {
+      DebtorSortMode.dueDate => compareNullableDates(
+        a.nearestDueAt,
+        b.nearestDueAt,
+      ),
+      DebtorSortMode.alphabet => debtorKey(a.name).compareTo(debtorKey(b.name)),
+      DebtorSortMode.debt => b.totalRemaining.compareTo(a.totalRemaining),
+    };
+  });
+  if (mode != DebtorSortMode.alphabet) {
+    sorted.sort((a, b) {
+      final primary = switch (mode) {
+        DebtorSortMode.dueDate => compareNullableDates(
+          a.nearestDueAt,
+          b.nearestDueAt,
+        ),
+        DebtorSortMode.debt => b.totalRemaining.compareTo(a.totalRemaining),
+        DebtorSortMode.alphabet => 0,
+      };
+      if (primary != 0) return primary;
+      return debtorKey(a.name).compareTo(debtorKey(b.name));
+    });
+  }
+  return sorted;
+}
+
+class DebtorAvatar extends StatelessWidget {
+  const DebtorAvatar({
+    required this.name,
+    required this.photoPath,
+    required this.radius,
+    super.key,
+  });
+
+  final String name;
+  final String? photoPath;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = photoPath;
+    final hasPhoto = path != null && File(path).existsSync();
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: const Color(0xFFDCEAE3),
+      backgroundImage: hasPhoto ? FileImage(File(path)) : null,
+      child: hasPhoto
+          ? null
+          : Text(
+              initials(name),
+              style: const TextStyle(
+                color: Color(0xFF123D34),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+    );
+  }
+}
+
+class DebtorTile extends StatelessWidget {
+  const DebtorTile({
+    required this.debtor,
+    required this.showTotal,
+    required this.photoPath,
+    required this.onTap,
+    super.key,
+  });
+
+  final DebtorAccount debtor;
+  final bool showTotal;
+  final String? photoPath;
+  final ValueChanged<DebtorAccount> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 390;
+    final dueLabel = debtor.nearestDueAt == null
+        ? 'без даты'
+        : dueCountdownLabel(debtor.nearestDueAt!);
+    return Card(
+      child: InkWell(
+        onTap: () => onTap(debtor),
+        borderRadius: BorderRadius.circular(22),
+        child: Padding(
+          padding: EdgeInsets.all(compact ? 14 : 16),
+          child: Row(
+            children: [
+              DebtorAvatar(
+                name: debtor.name,
+                photoPath: photoPath,
+                radius: compact ? 22 : 25,
+              ),
+              SizedBox(width: compact ? 10 : 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      debtor.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        height: 1.08,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      '${debtor.loanCount} ${loanWord(debtor.loanCount)} • $dueLabel',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.black54,
+                        fontSize: 13,
+                      ),
+                    ),
+                    if (debtor.hasOpenEndedLoan && debtor.nearestDueAt != null)
+                      const Text(
+                        'есть займ без даты возврата',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Colors.black45, fontSize: 12),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (showTotal)
+                SizedBox(
+                  width: compact ? 92 : 108,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      money(debtor.totalRemaining),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              const Icon(Icons.chevron_right, color: Colors.black38, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class DebtorProfilePage extends StatefulWidget {
+  const DebtorProfilePage({
+    required this.debtorName,
+    required this.showTotals,
+    required this.photoPath,
+    required this.loansProvider,
+    required this.onOpenLoan,
+    required this.onAddLoanForDebtor,
+    required this.onUpdatePhoto,
+    super.key,
+  });
+
+  final String debtorName;
+  final bool showTotals;
+  final String? photoPath;
+  final List<Loan> Function() loansProvider;
+  final Future<void> Function(Loan) onOpenLoan;
+  final Future<void> Function(String) onAddLoanForDebtor;
+  final Future<void> Function(String, String?) onUpdatePhoto;
+
+  @override
+  State<DebtorProfilePage> createState() => _DebtorProfilePageState();
+}
+
+class _DebtorProfilePageState extends State<DebtorProfilePage> {
+  String? _photoPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _photoPath = widget.photoPath;
+  }
+
+  List<Loan> get _loans =>
+      widget
+          .loansProvider()
+          .where((loan) => sameDebtor(loan.debtorName, widget.debtorName))
+          .toList()
+        ..sort((a, b) {
+          final dueCompare = compareNullableDates(a.dueAt, b.dueAt);
+          if (dueCompare != 0) return dueCompare;
+          return b.issuedAt.compareTo(a.issuedAt);
+        });
+
+  @override
+  Widget build(BuildContext context) {
+    final loans = _loans;
+    final active = loans.where((loan) => loan.isActive).toList();
+    final total = active.fold<double>(
+      0,
+      (sum, loan) => sum + loan.remainingDue,
+    );
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.debtorName),
+        backgroundColor: const Color(0xFFF7F4ED),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(18),
+          children: [
+            PageHeader(
+              eyebrow: '${active.length} активных займов',
+              title: widget.debtorName,
+              subtitle: widget.showTotals
+                  ? 'Общий остаток: ${money(total)}'
+                  : 'Все займы этого человека в одном профиле.',
+              action: FilledButton.icon(
+                onPressed: () async {
+                  await widget.onAddLoanForDebtor(widget.debtorName);
+                  if (mounted) setState(() {});
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Еще займ'),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    DebtorAvatar(
+                      name: widget.debtorName,
+                      photoPath: _photoPath,
+                      radius: 38,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Фото должника',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _photoPath == null
+                                ? 'Пока стоят инициалы'
+                                : 'Показывается в списке должников',
+                            style: const TextStyle(color: Colors.black54),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        IconButton.filledTonal(
+                          tooltip: 'Выбрать фото',
+                          onPressed: _pickPhoto,
+                          icon: const Icon(Icons.photo_camera_outlined),
+                        ),
+                        if (_photoPath != null)
+                          IconButton(
+                            tooltip: 'Убрать фото',
+                            onPressed: _removePhoto,
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            if (loans.isEmpty)
+              const EmptyCard(text: 'Займов у должника пока нет')
+            else
+              ...loans.map(
+                (loan) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: LoanTile(
+                    loan: loan,
+                    onTap: (item) async {
+                      await widget.onOpenLoan(item);
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickPhoto() async {
+    final picker = ImagePicker();
+    final image = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 900,
+      imageQuality: 82,
+    );
+    if (image == null) return;
+    final savedPath = await saveDebtorPhoto(widget.debtorName, image.path);
+    await widget.onUpdatePhoto(widget.debtorName, savedPath);
+    if (mounted) setState(() => _photoPath = savedPath);
+  }
+
+  Future<void> _removePhoto() async {
+    await widget.onUpdatePhoto(widget.debtorName, null);
+    if (mounted) setState(() => _photoPath = null);
   }
 }
 
@@ -821,6 +1353,7 @@ class RequestsView extends StatelessWidget {
     required this.onAddRequest,
     required this.onApprove,
     required this.onReject,
+    required this.onDelete,
     super.key,
   });
 
@@ -828,6 +1361,7 @@ class RequestsView extends StatelessWidget {
   final VoidCallback onAddRequest;
   final ValueChanged<LoanRequest> onApprove;
   final ValueChanged<LoanRequest> onReject;
+  final ValueChanged<LoanRequest> onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -863,6 +1397,7 @@ class RequestsView extends StatelessWidget {
               request: pending[index],
               onApprove: () => onApprove(pending[index]),
               onReject: () => onReject(pending[index]),
+              onDelete: () => onDelete(pending[index]),
             ),
           ),
         SliverToBoxAdapter(
@@ -871,7 +1406,10 @@ class RequestsView extends StatelessWidget {
         SliverList.separated(
           itemCount: history.length,
           separatorBuilder: (_, _) => const SizedBox(height: 10),
-          itemBuilder: (_, index) => RequestTile(request: history[index]),
+          itemBuilder: (_, index) => RequestTile(
+            request: history[index],
+            onDelete: () => onDelete(history[index]),
+          ),
         ),
       ],
     );
@@ -907,24 +1445,25 @@ class _CalendarViewState extends State<CalendarView> {
   @override
   Widget build(BuildContext context) {
     final active = widget.loans.where((item) => item.isActive).toList();
+    final datedActive = active.where((loan) => loan.dueAt != null).toList();
     final monthDays = daysInMonth(_month);
     final monthExpected = monthDays.fold<double>(
       0,
       (sum, day) =>
           sum +
-          active
+          datedActive
               .where((loan) => loan.isDueOn(day))
               .fold<double>(0, (daily, loan) => daily + loan.remainingDue),
     );
     final monthDue =
-        active
+        datedActive
             .where(
               (loan) =>
-                  loan.dueAt.year == _month.year &&
-                  loan.dueAt.month == _month.month,
+                  loan.dueAt!.year == _month.year &&
+                  loan.dueAt!.month == _month.month,
             )
             .toList()
-          ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
+          ..sort((a, b) => compareNullableDates(a.dueAt, b.dueAt));
 
     return CustomScrollView(
       slivers: [
@@ -992,7 +1531,7 @@ class _CalendarViewState extends State<CalendarView> {
                     const SizedBox(height: 6),
                     PortfolioCalendarGrid(
                       month: _month,
-                      loans: active,
+                      loans: datedActive,
                       onOpenLoan: widget.onOpenLoan,
                       onScheduleReturn: widget.onScheduleReturn,
                     ),
@@ -1277,11 +1816,15 @@ class DayReturnsSheet extends StatelessWidget {
 class TariffsView extends StatelessWidget {
   const TariffsView({
     required this.tariffs,
+    required this.showDebtorTotals,
+    required this.onShowDebtorTotalsChanged,
     required this.onEditTariff,
     super.key,
   });
 
   final List<DebtTariff> tariffs;
+  final bool showDebtorTotals;
+  final ValueChanged<bool> onShowDebtorTotalsChanged;
   final ValueChanged<DebtTariff> onEditTariff;
 
   @override
@@ -1290,10 +1833,35 @@ class TariffsView extends StatelessWidget {
       slivers: [
         const SliverToBoxAdapter(
           child: PageHeader(
-            eyebrow: 'УСЛОВИЯ ЗАЙМОВ',
-            title: 'Тарифы',
-            subtitle: 'Основной процент для новых займов и заявок.',
+            eyebrow: 'НАСТРОЙКИ ПРИЛОЖЕНИЯ',
+            title: 'Настройки',
+            subtitle: 'Отображение списка должников и условия займов.',
           ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.only(top: 20),
+          sliver: SliverToBoxAdapter(
+            child: Card(
+              child: SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                value: showDebtorTotals,
+                onChanged: onShowDebtorTotalsChanged,
+                title: const Text(
+                  'Показывать общую сумму в списке должников',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: const Text(
+                  'Если выключить, в списке останутся имена и ближайший возврат.',
+                ),
+              ),
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: SectionLabel(text: 'ТАРИФЫ', count: tariffs.length),
         ),
         if (tariffs.isEmpty)
           const SliverToBoxAdapter(
@@ -1716,7 +2284,7 @@ class LoanTile extends StatelessWidget {
                               const SizedBox(height: 4),
                               Text(
                                 loan.isActive
-                                    ? '${daysBetweenInclusive(loan.issuedAt, loan.dueAt)} дн.'
+                                    ? dueCountdownLabel(loan.dueAt)
                                     : 'закрыт',
                                 textAlign: TextAlign.right,
                                 style: TextStyle(
@@ -1739,7 +2307,7 @@ class LoanTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${compactDate(loan.issuedAt)} → ${compactDate(loan.dueAt)}',
+                      loanDateRangeLabel(loan),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -1773,12 +2341,14 @@ class RequestTile extends StatelessWidget {
     required this.request,
     this.onApprove,
     this.onReject,
+    this.onDelete,
     super.key,
   });
 
   final LoanRequest request;
   final VoidCallback? onApprove;
   final VoidCallback? onReject;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1829,6 +2399,11 @@ class RequestTile extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        tooltip: 'Удалить заявку',
+                        onPressed: onDelete,
+                        icon: const Icon(Icons.delete_outline),
+                      ),
                       TextButton(
                         onPressed: onReject,
                         child: const Text('Отказать'),
@@ -1841,7 +2416,17 @@ class RequestTile extends StatelessWidget {
                     ],
                   )
                 else
-                  StatusChip(status: request.status),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      StatusChip(status: request.status),
+                      IconButton(
+                        tooltip: 'Удалить заявку',
+                        onPressed: onDelete,
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ],
@@ -1898,7 +2483,7 @@ class LoanSummaryPanel extends StatelessWidget {
             const SizedBox(height: 14),
             Text(
               loan.isActive
-                  ? 'Плановый срок: ${shortDate(loan.dueAt)}'
+                  ? duePlanLabel(loan.dueAt)
                   : 'Закрыт: ${shortDate(loan.closedAt!)}',
               style: const TextStyle(color: Colors.black54),
             ),
@@ -2107,7 +2692,11 @@ class DailyAccrualList extends StatelessWidget {
         child: ListTile(
           contentPadding: const EdgeInsets.all(16),
           leading: const Icon(Icons.event_available_outlined),
-          title: Text('Ожидается ${longDate(loan.dueAt)}'),
+          title: Text(
+            loan.dueAt == null
+                ? 'Дата возврата не назначена'
+                : 'Ожидается ${longDate(loan.dueAt!)}',
+          ),
           subtitle: Text('Доход: ${money(loan.interest)}'),
           trailing: Text(
             money(loan.remainingDue),
@@ -2287,7 +2876,7 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
   final _note = TextEditingController();
   bool _fixedRepayment = false;
   late DateTime _issuedAt;
-  late DateTime _dueAt;
+  DateTime? _dueAt;
 
   @override
   void initState() {
@@ -2331,7 +2920,7 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
     if (picked == null) return;
     setState(() {
       _issuedAt = dateOnly(picked);
-      if (_dueAt.isBefore(_issuedAt)) {
+      if (_dueAt != null && _dueAt!.isBefore(_issuedAt)) {
         _dueAt = addMonths(_issuedAt, 1);
       }
     });
@@ -2340,7 +2929,7 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
   Future<void> _pickDueAt() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: _dueAt,
+      initialDate: _dueAt ?? addMonths(_issuedAt, 1),
       firstDate: DateTime(2020),
       lastDate: DateTime.now().add(const Duration(days: 3650)),
     );
@@ -2479,11 +3068,12 @@ class _CreateLoanDialogState extends State<CreateLoanDialog> {
                   ),
                 ),
               const SizedBox(height: 10),
-              DialogDateField(
+              OptionalDateField(
                 label: 'Дата возврата',
-                value: shortDate(_dueAt),
+                value: _dueAt,
                 icon: Icons.event_available_outlined,
                 onTap: _pickDueAt,
+                onClear: () => setState(() => _dueAt = null),
               ),
               const SizedBox(height: 10),
               TextField(
@@ -2556,7 +3146,7 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
   late final TextEditingController _percent;
   late final TextEditingController _note;
   late DateTime _issuedAt;
-  late DateTime _dueAt;
+  DateTime? _dueAt;
   late bool _fixedRepayment;
 
   @override
@@ -2600,7 +3190,7 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
   Future<void> _pickDueAt() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: _dueAt,
+      initialDate: _dueAt ?? addMonths(_issuedAt, 1),
       firstDate: DateTime(2020),
       lastDate: DateTime.now().add(const Duration(days: 3650)),
     );
@@ -2647,11 +3237,12 @@ class _EditLoanDialogState extends State<EditLoanDialog> {
                 onTap: _pickIssuedAt,
               ),
               const SizedBox(height: 10),
-              DialogDateField(
+              OptionalDateField(
                 label: 'Дата возврата',
-                value: shortDate(_dueAt),
+                value: _dueAt,
                 icon: Icons.event_available_outlined,
                 onTap: _pickDueAt,
+                onClear: () => setState(() => _dueAt = null),
               ),
               const SizedBox(height: 10),
               FixedRepaymentToggle(
@@ -3376,6 +3967,83 @@ class DialogDateField extends StatelessWidget {
   }
 }
 
+class OptionalDateField extends StatelessWidget {
+  const OptionalDateField({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.onTap,
+    required this.onClear,
+    super.key,
+  });
+
+  final String label;
+  final DateTime? value;
+  final IconData icon;
+  final VoidCallback onTap;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasDate = value != null;
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF65746B),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      hasDate ? shortDate(value!) : 'Без даты возврата',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: hasDate ? Colors.black87 : Colors.black45,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        height: 1.05,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (hasDate)
+                IconButton(
+                  tooltip: 'Убрать дату',
+                  onPressed: onClear,
+                  icon: const Icon(Icons.close),
+                ),
+              Icon(icon, color: const Color(0xFF3A4641), size: 28),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const _unset = Object();
+
 class Loan {
   Loan({
     required this.id,
@@ -3384,7 +4052,7 @@ class Loan {
     required this.principal,
     this.repaymentAmount,
     required this.issuedAt,
-    required this.dueAt,
+    this.dueAt,
     required this.dailyPercent,
     required this.note,
     this.expectedReturnAmount,
@@ -3399,7 +4067,7 @@ class Loan {
   final double principal;
   final double? repaymentAmount;
   final DateTime issuedAt;
-  final DateTime dueAt;
+  final DateTime? dueAt;
   final double dailyPercent;
   final String note;
   final double? expectedReturnAmount;
@@ -3442,10 +4110,10 @@ class Loan {
     return !value.isBefore(issuedAt) && !value.isAfter(calculationEnd);
   }
 
-  bool isDueOn(DateTime date) => sameDay(date, dueAt);
+  bool isDueOn(DateTime date) => dueAt != null && sameDay(date, dueAt!);
 
   Loan copyWith({
-    DateTime? dueAt,
+    Object? dueAt = _unset,
     double? expectedReturnAmount,
     double? paidAmount,
     DateTime? archivedAt,
@@ -3459,7 +4127,7 @@ class Loan {
       principal: principal,
       repaymentAmount: repaymentAmount,
       issuedAt: issuedAt,
-      dueAt: dueAt ?? this.dueAt,
+      dueAt: identical(dueAt, _unset) ? this.dueAt : dueAt as DateTime?,
       dailyPercent: dailyPercent,
       note: note ?? this.note,
       expectedReturnAmount: expectedReturnAmount ?? this.expectedReturnAmount,
@@ -3476,7 +4144,7 @@ class Loan {
     'principal': principal,
     'repaymentAmount': repaymentAmount,
     'issuedAt': issuedAt.toIso8601String(),
-    'dueAt': dueAt.toIso8601String(),
+    'dueAt': dueAt?.toIso8601String(),
     'dailyPercent': dailyPercent,
     'note': note,
     'expectedReturnAmount': expectedReturnAmount,
@@ -3492,7 +4160,9 @@ class Loan {
     principal: (json['principal'] as num).toDouble(),
     repaymentAmount: (json['repaymentAmount'] as num?)?.toDouble(),
     issuedAt: DateTime.parse(json['issuedAt'] as String),
-    dueAt: DateTime.parse(json['dueAt'] as String),
+    dueAt: json['dueAt'] == null
+        ? null
+        : DateTime.parse(json['dueAt'] as String),
     dailyPercent: (json['dailyPercent'] as num).toDouble(),
     note: (json['note'] ?? '') as String,
     expectedReturnAmount: (json['expectedReturnAmount'] as num?)?.toDouble(),
@@ -3595,10 +4265,16 @@ class DebtData {
     required this.loans,
     required this.requests,
     required this.tariffs,
+    this.debtorPhotos = const {},
+    this.debtorSortMode = DebtorSortMode.dueDate,
+    this.showDebtorTotals = true,
   });
   final List<Loan> loans;
   final List<LoanRequest> requests;
   final List<DebtTariff> tariffs;
+  final Map<String, String> debtorPhotos;
+  final DebtorSortMode debtorSortMode;
+  final bool showDebtorTotals;
 }
 
 class DebtRepository {
@@ -3633,6 +4309,11 @@ class DebtRepository {
               )
               .toList() ??
           fallbackTariffs,
+      debtorPhotos: Map<String, String>.from(
+        (json['debtorPhotos'] as Map?) ?? const {},
+      ),
+      debtorSortMode: debtorSortModeFromJson(json['debtorSortMode']),
+      showDebtorTotals: json['showDebtorTotals'] != false,
     );
   }
 
@@ -3640,6 +4321,9 @@ class DebtRepository {
     List<Loan> loans,
     List<LoanRequest> requests,
     List<DebtTariff> tariffs,
+    bool showDebtorTotals,
+    Map<String, String> debtorPhotos,
+    DebtorSortMode debtorSortMode,
   ) async {
     if (_remoteAvailable) return;
 
@@ -3650,6 +4334,9 @@ class DebtRepository {
         'loans': loans.map((item) => item.toJson()).toList(),
         'requests': requests.map((item) => item.toJson()).toList(),
         'tariffs': tariffs.map((item) => item.toJson()).toList(),
+        'showDebtorTotals': showDebtorTotals,
+        'debtorPhotos': debtorPhotos,
+        'debtorSortMode': debtorSortMode.name,
       }),
     );
   }
@@ -3663,7 +4350,7 @@ class DebtRepository {
       'principal': loan.principal,
       'repayment_amount': loan.repaymentAmount,
       'issued_at': apiDate(loan.issuedAt),
-      'due_at': apiDate(loan.dueAt),
+      'due_at': loan.dueAt == null ? null : apiDate(loan.dueAt!),
       'daily_percent': loan.dailyPercent,
       'monthly_percent': loan.dailyPercent * 30,
       'note': loan.note,
@@ -3900,6 +4587,71 @@ DateTime addMonths(DateTime date, int months) {
 int daysBetweenInclusive(DateTime start, DateTime end) {
   final value = dateOnly(end).difference(dateOnly(start)).inDays + 1;
   return value > 0 ? value : 0;
+}
+
+int compareNullableDates(DateTime? left, DateTime? right) {
+  if (left == null && right == null) return 0;
+  if (left == null) return 1;
+  if (right == null) return -1;
+  return left.compareTo(right);
+}
+
+String dueCountdownLabel(DateTime? dueAt) {
+  if (dueAt == null) return 'без даты';
+  final diff = dateOnly(dueAt).difference(dateOnly(DateTime.now())).inDays;
+  if (diff < 0) return 'просрочено';
+  if (diff == 0) return 'сегодня';
+  if (diff == 1) return 'завтра';
+  return 'через $diff ${dayWord(diff)}';
+}
+
+String duePlanLabel(DateTime? dueAt) => dueAt == null
+    ? 'Дата возврата не назначена'
+    : 'Плановый срок: ${shortDate(dueAt)}';
+
+String loanDateRangeLabel(Loan loan) => loan.dueAt == null
+    ? 'выдан ${compactDate(loan.issuedAt)} • без даты возврата'
+    : '${compactDate(loan.issuedAt)} → ${compactDate(loan.dueAt!)}';
+
+String dayWord(int count) {
+  final mod100 = count % 100;
+  final mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 14) return 'дней';
+  if (mod10 == 1) return 'день';
+  if (mod10 >= 2 && mod10 <= 4) return 'дня';
+  return 'дней';
+}
+
+String loanWord(int count) {
+  final mod100 = count % 100;
+  final mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 14) return 'займов';
+  if (mod10 == 1) return 'займ';
+  if (mod10 >= 2 && mod10 <= 4) return 'займа';
+  return 'займов';
+}
+
+String debtorKey(String name) => name.trim().toLowerCase();
+
+String? debtorPhotoPath(Map<String, String> photos, String name) =>
+    photos[debtorKey(name)];
+
+bool sameDebtor(String left, String right) =>
+    debtorKey(left) == debtorKey(right);
+
+Future<String> saveDebtorPhoto(String debtorName, String sourcePath) async {
+  final directory = await getApplicationDocumentsDirectory();
+  final photosDir = Directory('${directory.path}/debtor_photos');
+  if (!photosDir.existsSync()) {
+    photosDir.createSync(recursive: true);
+  }
+  final safeName = debtorKey(debtorName)
+      .replaceAll(RegExp(r'[^a-zа-я0-9]+', caseSensitive: false), '_')
+      .replaceAll(RegExp(r'_+'), '_');
+  final targetPath =
+      '${photosDir.path}/${safeName}_${DateTime.now().microsecondsSinceEpoch}.jpg';
+  final saved = await File(sourcePath).copy(targetPath);
+  return saved.path;
 }
 
 List<DateTime> daysInMonth(DateTime month) {
