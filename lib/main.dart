@@ -1186,7 +1186,7 @@ class DebtorTile extends StatelessWidget {
     final compact = MediaQuery.sizeOf(context).width < 390;
     final dueLabel = debtor.nearestDueAt == null
         ? 'без даты'
-        : dueCountdownLabel(debtor.nearestDueAt!);
+        : '${longDate(debtor.nearestDueAt!, includeYear: false)} (${dueCountdownLabel(debtor.nearestDueAt!)})';
     return Card(
       child: InkWell(
         onTap: () => onTap(debtor),
@@ -1217,9 +1217,14 @@ class DebtorTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      '${debtor.loanCount} ${loanWord(debtor.loanCount)} • $dueLabel',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      '${debtor.loanCount} ${loanWord(debtor.loanCount)}',
+                      style: const TextStyle(
+                        color: Colors.black54,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Text(
+                      dueLabel,
                       style: const TextStyle(
                         color: Colors.black54,
                         fontSize: 13,
@@ -5063,7 +5068,7 @@ String compactDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${(value.year % 100).toString().padLeft(2, '0')}';
 String shortDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${value.year}';
-String longDate(DateTime value) {
+String longDate(DateTime value, {bool includeYear = true}) {
   const months = [
     'января',
     'февраля',
@@ -5078,7 +5083,7 @@ String longDate(DateTime value) {
     'ноября',
     'декабря',
   ];
-  return '${value.day} ${months[value.month - 1]} ${value.year}';
+  return '${value.day} ${months[value.month - 1]}${includeYear ? ' ${value.year}' : ''}';
 }
 
 String monthLabel(DateTime value) {
